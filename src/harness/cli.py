@@ -30,7 +30,9 @@ from .client import HarnessClient, StreamEvent
 from .config import Config, Endpoint, load_config
 from .tools import default_registry
 from .tools.calc import register as register_calc
-from .tools.cerebro import register as register_cerebro
+# Cerebro tools now come via MCP (all 42 tools) — manual wrapper disabled.
+# See configs/mcp_servers.toml [servers.cerebro].
+# from .tools.cerebro import register as register_cerebro
 from .tools.filesystem import FsSandbox, register as register_fs
 from .mcp import MCPManager, load_mcp_config
 
@@ -590,7 +592,8 @@ async def chat_loop(args: argparse.Namespace) -> int:
     # in cerebro just disables those tools.
     sandbox = register_fs(default_registry, sandbox=FsSandbox(args.sandbox or None))
     register_calc(default_registry)
-    register_cerebro(default_registry)
+    # Cerebro tools via MCP instead of manual wrapper. Start with /mcp start cerebro
+    # sandbox = register_cerebro(default_registry)  # disabled — see comment above
 
     state = State(cfg, ep, sandbox)
     if args.system:

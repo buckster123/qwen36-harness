@@ -442,23 +442,97 @@ real agentic driver before we trust it for anything serious.
 
 ---
 
-## Success criteria
+## STATUS — As of Apr 28 evening session roundoff
 
-By end of Phase 4 we have:
+### ✅ Complete
 
-- [ ] `harness chat` opens a fast, private chat with the Vast endpoint that
-      feels qualitatively better than the borrowed chat.html (thinking
-      visualization, tool calls, transcript save, endpoint hot-swap)
-- [ ] Web UI at `http://127.0.0.1:7777` provides the same UX in a browser
-- [ ] Five tools wired in: filesystem, calc, web, shell, cerebro
-- [ ] CC dream cycles can run on Qwen3.6-35B-A3B as primary
-- [ ] One end-to-end agentic loop (e.g. "summarize the last 3 sessions in my
-      cerebro memory and write the result to a markdown file") works
-      reliably 5/5 attempts
-- [ ] Repo is on GitHub, commits per task, README explains how to run
+- **Phase 0** (repo scaffold, venv, endpoint config)
+- **Phase 1** (client + CLI chat with thinking visualization, endpoint hot-swap)
+- **Phase 2** (tool registry: filesystem, calc, web fetch — agent loop in `agent.py`)
+- **Phase 3** (web UI at `/v1` serve endpoint via uvicorn)
+- **Phase 4.1** — Cerebro integration: switched from manual Python wrapper to full MCP route
+  
+  Before: `tools/cerebro.py` had 3 manual wrappers (recall, remember, list_episodes).
+  Now: All 42 CC tools wire in via harness's existing `MCPManager` as stdio subprocess.
 
-By end of Phase 5 we have:
+### 🔧 How the MCP route works
 
-- [ ] `docs/experiments/` filled with 7-10 mini-experiment writeups
-- [ ] A clear sense of what Qwen3.6 is and isn't good at agentically
-- [ ] A reusable harness Andre wants to keep using even after this evening
+1. Add `[servers.cerebro]` to `configs/mcp_servers.toml`:
+   ```toml
+   [servers.cerebro]
+   command = ["/home/andre/projects/CerebroCortex/cerebro-mcp"]
+   auto_start = false
+   env = { CEREBRO_DATA_DIR="/home/andre/.cerebro-cortex" }
+   ```
+
+2. In harness REPL: `/mcp start cerebro`
+   - `MCPManager` spawns `cerebro-mcp` as stdio subprocess
+   - Calls `list_tools` → gets 42 tools
+   - Registers each as `cerebro.<tool_name>` in `default_registry`
+   - Tools are now available in agent mode alongside `fs.*`, `calc.*`, etc.
+
+3. Manual wrapper disabled: `cli.py` no longer calls `register_cerebro()`
+
+### 📋 Tests
+
+- `tests/test_mcp_cerebro.py` — 5 integration tests, all passing:
+  - Tool discovery (42 tools registered)
+  - Schema export verification
+  - `cerebro.recall` dispatch → returns memory objects
+  - `cerebro.list_intentions` dispatch → returns pending TODOs
+  - `cerebro.remember` dispatch → stores/retrieves memories
+
+### ⏳ Deferred / Pending
+
+| Task | Status | Notes |
+|---|---|---|
+| 4.2 Harness-as-CC's dream LLM | Not started | Edit `~/.cerebro-cortex/settings.json`, point to Vast Qwen3.6 endpoint |
+| 4.3 Integration docs | Not started | `docs/cerebro-integration.md` with diagram + example prompts |
+| Embedder mismatch | Known issue | CC store built with BGE-via-NPU; local is MiniLM. Fix: `cerebro doctor audit --fix-fingerprint` or reembed_collections.py. Benign for tool availability, affects recall quality of old memories. |
+| Phase 5 tool-piling experiments | Deferred | Wait until ctx window is freed up — don't stress the Vast box right now |
+
+### ⚠️ Known Issues
+
+- **CC embedder mismatch**: `openai_compat:bge-small-en-v1.5-int8@:8001` vs local `sbert:all-MiniLM-L6-v2`. Causes degraded recall quality for existing memories but does NOT break tool dispatch or MCP connectivity.
+- **Thalamus gating**: CC may reject very short or duplicate content via `remember`. Long unique content passes through. This is expected behavior — the model should produce substantive memories, not junk.
+- **MCP stderr noise**: CC logs embedder warnings to stderr on startup. Filter with grep in harness if it clutters output.
+
+### 🔑 Key Files Reference
+
+```
+~/projects/qwen36-harness/
+├── configs/
+│   ├── mcp_servers.toml      ← cerebro server config here
+│   └── endpoints.toml        ← Vast tunnel (:8800) + NPU endpoints
+├── src/harness/
+│   ├── cli.py                → disabled manual cerebro wrapper (line ~33, ~592)
+│   ├── mcp.py                → MCPManager (auto-starts stdio servers from config)
+│   ├── agent.py              → tool-loop driver with streaming events
+│   └── tools/
+│       ├── __init__.py       → Registry + ToolSpec + dispatch
+│       ├── filesystem.py     → sandboxed fs.* tools
+│       ├── calc.py           → sympy calculator
+│       ├── web.py            → fetch + search
+│       └── cerebro.py        → OLD manual wrapper (disabled, kept for reference)
+└── tests/
+    └── test_mcp_cerebro.py   ← 5 new integration tests (all passing)
+
+~/projects/CerebroCortex/
+├── cerebro-mcp               → stdio launcher script (sets CEREBRO_DATA_DIR, PATH, etc.)
+├── src/cerebro/interfaces/mcp_server.py → MCP tool definitions (42 tools)
+└── ~/.cerebro-cortex/        ← actual CC data store (sqlite + chroma)
+```
+
+### 🚀 Quick Start for Next Session
+
+1. `cd ~/projects/qwen36-harness && .venv/bin/pip install -e .` (if venv reset)
+2. `.venv/bin/python -m pytest tests/ -v` — should all pass
+3. `.venv/bin/python -m harness.cli chat --agent` → `/mcp start cerebro` → use `cerebro.*` tools in agent mode
+
+### 💡 Session Context (for fresh ctx window)
+
+- **Endpoint**: Vast.ai RTX 5090 Norway at `http://127.0.0.1:8800/v1` via SSH tunnel
+- **Model**: Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf, 128K ctx, thinking mode
+- **Rate**: ~110 t/s decode (decent but pushing limits with full context)
+- **Goal**: Phase 5 tool-piling experiments, then prod-level agentic loops once ctx headroom is available
+- **Big picture**: Harness is a reusable private agent backbone. Cerebro provides long-term memory. Together they make a privacy-first personal AI system that doesn't depend on cloud APIs for reasoning or memory.

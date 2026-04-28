@@ -14,6 +14,14 @@ command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/andre/
 auto_start = false   # off by default; opt-in per session via /mcp start fs-mcp
 connect_timeout = 60.0  # npx may need to fetch the package on first run
 
+# --- CerebroCortex memory tools ---
+# Gives the model access to recall, remember, episode management, dream cycle,
+# intention tracking, schema search, etc. All 42 CC tools appear as `cerebro.*`.
+[servers.cerebro]
+command = ["/home/andre/projects/CerebroCortex/cerebro-mcp"]
+auto_start = false   # off by default; /mcp start cerebro to enable
+env = { CEREBRO_DATA_DIR="/home/andre/.cerebro-cortex" }
+
 # --- Examples (commented; flip auto_start=true and fill creds when needed) ---
 
 # [servers.time]
@@ -23,9 +31,9 @@ connect_timeout = 60.0  # npx may need to fetch the package on first run
 # [servers.github]
 # command = ["npx", "-y", "@modelcontextprotocol/server-github"]
 # auto_start = false
-# env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_xxxxxxxxxxxx" }
+# env = { GITHUB_PERSONAL_ACCESS_TOKEN="ghp_xxxxxxxxxxxx" }
 
 # [servers.brave-search]
 # command = ["uvx", "mcp-server-brave-search"]
 # auto_start = false
-# env = { BRAVE_API_KEY = "BSA-xxxxxxxx" }
+# env = { BRAVE_API_KEY="***" }
