@@ -1,0 +1,31 @@
+# MCP server registry for the qwen36-harness.
+#
+# Each entry under [servers.<name>] becomes a long-lived stdio subprocess.
+# Tools are registered into the harness registry as `<name>.<tool>`.
+#
+# Servers default to auto_start=true; flip to false to make a server lazy
+# (manually `/mcp start <name>`).
+
+# Filesystem MCP — gives the model read/list/write/search over a sandboxed
+# directory. Coexists with our builtin fs.* tools (namespaced separately so
+# no collision).
+[servers.fs-mcp]
+command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/andre/qwen36-sandbox"]
+auto_start = false   # off by default; opt-in per session via /mcp start fs-mcp
+connect_timeout = 60.0  # npx may need to fetch the package on first run
+
+# --- Examples (commented; flip auto_start=true and fill creds when needed) ---
+
+# [servers.time]
+# command = ["uvx", "mcp-server-time"]
+# auto_start = false
+
+# [servers.github]
+# command = ["npx", "-y", "@modelcontextprotocol/server-github"]
+# auto_start = false
+# env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_xxxxxxxxxxxx" }
+
+# [servers.brave-search]
+# command = ["uvx", "mcp-server-brave-search"]
+# auto_start = false
+# env = { BRAVE_API_KEY = "BSA-xxxxxxxx" }

@@ -32,6 +32,7 @@ from .tools import default_registry
 from .tools.calc import register as register_calc
 from .tools.cerebro import register as register_cerebro
 from .tools.filesystem import FsSandbox, register as register_fs
+from .mcp import MCPManager, load_mcp_config
 
 # --- styling ------------------------------------------------------------------
 
@@ -84,6 +85,9 @@ HELP = """
   /tools               list registered tools and their state
   /tools on|off <name> enable/disable a specific tool
   /agent on|off        toggle tool-loop mode (default off = plain chat)
+  /mcp                 list configured MCP servers + state
+  /mcp start <name>    spawn an MCP server, register its tools
+  /mcp stop <name>     stop an MCP server, unregister its tools
   /sandbox             show filesystem sandbox root
   /clear               drop conversation history (keeps system prompt)
   /save [path]         save transcript as JSON
@@ -355,6 +359,8 @@ class State:
         self.temperature = ep.default_temperature
         self.sandbox = sandbox
         self.agent_mode = False  # toggle with /agent on
+        self.mcp = MCPManager(default_registry)
+        self.mcp_configs: dict[str, Any] = {}  # populated in chat_loop()
 
     async def switch_endpoint(self, name: str) -> None:
         try:
@@ -472,6 +478,50 @@ async def handle_slash(state: State, line: str) -> bool:
         else:
             console.print(f"[{C_ERR}]usage: /agent on|off[/]")
 
+    elif cmd == "/mcp":
+        sub = arg.split(maxsplit=1) if arg else []
+        if not sub:
+            # list configured + running
+            running = set(state.mcp.server_names())
+            if not state.mcp_configs:
+                console.print(f"[{C_SYS}]no MCP servers configured (configs/mcp_servers.toml)[/]")
+            for name, mc in state.mcp_configs.items():
+                if name in running:
+                    tools = state.mcp.tools_for(name)
+                    console.print(
+                        f" [{C_OK}]up[/]   [{C_TOOL}]{name:<14}[/]"
+                        f"  [{C_SYS}]{len(tools)} tool(s): {', '.join(tools) or '-'}[/]"
+                    )
+                else:
+                    cmdstr = " ".join(mc.command)
+                    console.print(
+                        f" [{C_ERR}]down[/] [{C_TOOL}]{name:<14}[/]"
+                        f"  [{C_SYS}]{cmdstr[:80]}[/]"
+                    )
+        elif len(sub) == 2 and sub[0] == "start":
+            name = sub[1].strip()
+            mc = state.mcp_configs.get(name)
+            if mc is None:
+                console.print(f"[{C_ERR}]no such MCP server in config: {name}[/]")
+            else:
+                try:
+                    await state.mcp.start(mc)
+                    tools = state.mcp.tools_for(name)
+                    console.print(
+                        f"[{C_OK}]mcp '{name}' up[/]  ({len(tools)} tools: {', '.join(tools)})"
+                    )
+                except Exception as e:  # noqa: BLE001
+                    console.print(f"[{C_ERR}]start failed: {e}[/]")
+        elif len(sub) == 2 and sub[0] == "stop":
+            name = sub[1].strip()
+            try:
+                await state.mcp.stop(name)
+                console.print(f"[{C_OK}]mcp '{name}' stopped[/]")
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[{C_ERR}]stop failed: {e}[/]")
+        else:
+            console.print(f"[{C_ERR}]usage: /mcp  OR  /mcp start|stop <name>[/]")
+
     elif cmd == "/sandbox":
         console.print(f"[{C_OK}]fs sandbox root: {state.sandbox.root}[/]")
 
@@ -550,6 +600,19 @@ async def chat_loop(args: argparse.Namespace) -> int:
     if args.agent:
         state.agent_mode = True
 
+    # Load MCP server configs and auto_start any flagged servers.
+    state.mcp_configs = load_mcp_config()
+    for name, mc in state.mcp_configs.items():
+        if mc.auto_start:
+            try:
+                await state.mcp.start(mc)
+                tools = state.mcp.tools_for(name)
+                console.print(
+                    f"[{C_OK}]mcp '{name}' up[/]  ({len(tools)} tools: {', '.join(tools) or '-'})"
+                )
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[{C_ERR}]mcp '{name}' auto_start failed: {e}[/]")
+
     banner(cfg, state.ep, show_thinking=state.show_thinking)
     if state.agent_mode:
         console.print(f"[{C_OK}]agent-mode ON[/]  — tools: " + ", ".join(default_registry.names()))
@@ -588,6 +651,7 @@ async def chat_loop(args: argparse.Namespace) -> int:
         state.convo.last_stats = stats
         console.print()
 
+    await state.mcp.stop_all()
     await state.client.aclose()
     return 0
 
