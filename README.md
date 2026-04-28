@@ -4,7 +4,7 @@ Personal agentic harness around a private Qwen3.6 endpoint (currently a Vast.ai
 RTX 5090 running llama.cpp + Unsloth UD GGUFs). Chat UI, tool registry, and
 bidirectional CerebroCortex integration.
 
-**Status:** Phase 2.5 SHIPPED (Apr 28, 2026, evening session continues). See
+**Status:** Phase 3 SHIPPED (Apr 28, 2026, late-evening session). See
 `docs/plans/2026-04-28-qwen36-harness.md` for the full implementation plan.
 
 **Done:**
@@ -15,17 +15,26 @@ bidirectional CerebroCortex integration.
             (35 unit tests + 5 smoke tests passing)
 - Phase 2.5 MCP client (`mcp>=1.0`): MCPManager spawns stdio servers,
             registers their tools as `<server>.<tool>`, `/mcp` slash commands,
-            configs/mcp_servers.toml. fs-mcp verified end-to-end —
-            Qwen3.6-35B-A3B successfully calls real `@modelcontextprotocol/server-filesystem`
-            via JSON-RPC and answers from the file contents.
-            (45 unit tests + 7 smoke tests, 52/52 green with full env)
+            configs/mcp_servers.toml. fs-mcp verified end-to-end.
+- Phase 3   FastAPI web UI: 3-pane layout, SSE streaming, inline collapsible
+            tool-call panels, MCP server start/stop, tool toggle, endpoint
+            switcher, mode/temp/max controls, dark terminal aesthetic.
+            `harness serve` opens browser at http://127.0.0.1:7777/.
+            (56 unit tests + 7 smoke tests, all green)
 
 **Live state:** Vast.ai NO 5090 instance 35758586 still running ($0.40/hr,
-~$1.50 burned across the evening). Tunnel up at `127.0.0.1:8800`. Default
+~$2 burned across the evening). Tunnel up at `127.0.0.1:8800`. Default
 endpoint `vast-qwen36-moe` works end-to-end with agentic tool calls
-(verified via `tests/test_smoke_agent.py` and `tests/test_smoke_mcp_agent.py`).
+(verified through CLI agent loop, MCP-bridged tools, and the new web UI).
 
-**Next up:** Phase 3 web UI → Phase 4 real Cerebro wiring → Phase 5 tool-piling.
+**Run the UI:**
+
+```bash
+cd ~/projects/qwen36-harness
+.venv/bin/python -m harness.cli serve   # opens http://127.0.0.1:7777
+```
+
+**Next up:** Phase 4 real Cerebro wiring → Phase 5 tool-piling experiments.
 
 ## Why this exists
 

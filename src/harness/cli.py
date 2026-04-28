@@ -667,13 +667,49 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--agent", action="store_true", help="enable tool-loop agent mode")
     chat.add_argument("--sandbox", help="fs sandbox root (default ~/qwen36-sandbox)")
 
+    serve = sub.add_parser("serve", help="run the web UI")
+    serve.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")
+    serve.add_argument("--port", type=int, default=7777, help="bind port (default 7777)")
+    serve.add_argument("--no-browser", action="store_true", help="don't open browser on start")
+    serve.add_argument("--reload", action="store_true", help="dev: auto-reload on code changes")
+
     args = p.parse_args(argv)
     if args.command == "chat":
         try:
             return asyncio.run(chat_loop(args))
         except KeyboardInterrupt:
             return 130
+    elif args.command == "serve":
+        return _run_serve(args)
     return 2
+
+
+def _run_serve(args: Any) -> int:
+    """Launch the web UI via uvicorn."""
+    import uvicorn  # local import — only needed for serve
+
+    from .web import create_app
+
+    if not args.reload:
+        # Open the browser shortly after the server starts.
+        if not args.no_browser:
+            import threading
+            import time
+            import webbrowser
+
+            def _open() -> None:
+                time.sleep(0.7)
+                webbrowser.open(f"http://{args.host}:{args.port}/")
+
+            threading.Thread(target=_open, daemon=True).start()
+
+        app = create_app()
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    else:
+        # reload mode requires a string import path
+        uvicorn.run("harness.web:create_app", host=args.host, port=args.port,
+                    log_level="info", reload=True, factory=True)
+    return 0
 
 
 if __name__ == "__main__":

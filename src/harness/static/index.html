@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>qwen36-harness</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1f262d;
+    --bg4: #2a3038;
+    --fg: #e6edf3;
+    --fg2: #8b949e;
+    --fg3: #6e7681;
+    --accent: #7ee787;
+    --accent2: #58a6ff;
+    --user: #1f3a4d;
+    --assistant: #1a232b;
+    --tool: #2a2415;
+    --reasoning: #5a5546;
+    --error: #f85149;
+    --warn: #d29922;
+    --border: #30363d;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: 'SF Mono', Monaco, Inconsolata, 'Fira Code', monospace;
+    background: var(--bg);
+    color: var(--fg);
+    display: grid;
+    grid-template-columns: 220px 1fr 280px;
+    grid-template-rows: 36px 1fr;
+    grid-template-areas:
+      "header header header"
+      "left   chat   right";
+    height: 100vh;
+    font-size: 13px;
+  }
+  header {
+    grid-area: header;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 12px;
+  }
+  header h1 { font-size: 13px; margin: 0; color: var(--accent); font-weight: 600; }
+  header .sub { font-size: 11px; color: var(--fg2); }
+  header .grow { flex: 1; }
+  header select, header input, header button {
+    background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 11px;
+  }
+  header label { font-size: 11px; color: var(--fg2); display: flex; align-items: center; gap: 4px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--error); border-color: var(--error); }
+
+  /* SIDE PANELS */
+  aside {
+    background: var(--bg2);
+    overflow-y: auto;
+    padding: 8px;
+  }
+  aside.left { grid-area: left; border-right: 1px solid var(--border); }
+  aside.right { grid-area: right; border-left: 1px solid var(--border); }
+  aside h2 {
+    font-size: 11px; text-transform: uppercase; color: var(--fg2);
+    margin: 8px 0 4px 0; letter-spacing: 0.05em;
+  }
+  .row { display: flex; gap: 4px; align-items: center; padding: 3px 0; font-size: 11px; }
+  .row .name { flex: 1; color: var(--fg); }
+  .row .desc { color: var(--fg3); font-size: 10px; }
+  .pill {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 600; text-transform: uppercase;
+  }
+  .pill.on  { background: var(--accent); color: #000; }
+  .pill.off { background: var(--bg4); color: var(--fg3); }
+  .pill.up  { background: var(--accent); color: #000; }
+  .pill.down{ background: var(--error); color: #fff; }
+  .pill.mcp { background: var(--accent2); color: #000; }
+
+  /* MAIN CHAT */
+  main {
+    grid-area: chat;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  #chat {
+    flex: 1; overflow-y: auto; padding: 12px 16px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .msg { padding: 8px 12px; border-radius: 6px; max-width: 85%; line-height: 1.45; }
+  .msg pre { white-space: pre-wrap; word-wrap: break-word; margin: 0; font: inherit; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.assistant { align-self: flex-start; background: var(--assistant); border: 1px solid var(--border); width: 85%; }
+  .msg.system { align-self: center; background: transparent; color: var(--fg2); font-size: 11px; border: 1px dashed var(--border); padding: 4px 12px; }
+  .reasoning {
+    color: var(--reasoning); font-style: italic;
+    padding: 6px 10px; margin: 4px 0; font-size: 12px;
+    border-left: 2px solid var(--reasoning);
+    background: rgba(90,85,70,0.05);
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .tool-panel {
+    background: var(--tool); border: 1px solid #4a3f1c; border-radius: 4px;
+    margin: 6px 0; font-size: 11px;
+  }
+  .tool-panel .tool-head {
+    padding: 4px 8px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+    user-select: none;
+  }
+  .tool-panel .tool-head:hover { background: rgba(255,255,255,0.05); }
+  .tool-panel .arrow { color: var(--fg3); font-size: 9px; }
+  .tool-panel .tool-name { color: var(--accent2); font-weight: 600; }
+  .tool-panel .tool-status { color: var(--fg3); font-size: 10px; margin-left: auto; }
+  .tool-panel .tool-body {
+    border-top: 1px solid #4a3f1c;
+    padding: 6px 8px; display: none;
+  }
+  .tool-panel.open .tool-body { display: block; }
+  .tool-panel .label { color: var(--fg3); font-size: 10px; text-transform: uppercase; margin: 4px 0 2px; }
+  .tool-panel pre {
+    background: var(--bg); padding: 4px 6px; border-radius: 3px;
+    margin: 0; max-height: 240px; overflow: auto;
+    white-space: pre-wrap; word-wrap: break-word; font-size: 11px;
+  }
+  .tool-panel.error { border-color: var(--error); }
+  .tool-panel.error .tool-name { color: var(--error); }
+
+  /* INPUT */
+  #input-area {
+    border-top: 1px solid var(--border);
+    background: var(--bg2);
+    padding: 8px 12px;
+    display: flex; gap: 8px; align-items: flex-end;
+  }
+  #input-area textarea {
+    flex: 1; background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px; font: inherit; font-size: 13px;
+    resize: vertical; min-height: 38px; max-height: 200px;
+  }
+  #input-area textarea:focus { outline: none; border-color: var(--accent); }
+  #status-bar {
+    background: var(--bg2); border-top: 1px solid var(--border);
+    padding: 3px 12px; font-size: 10px; color: var(--fg3);
+    display: flex; gap: 12px;
+  }
+  #status-bar .grow { flex: 1; }
+  .stat { color: var(--fg2); }
+  .stat strong { color: var(--accent); font-weight: 600; }
+
+  /* TOAST */
+  #toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--bg3); border: 1px solid var(--border); padding: 6px 12px;
+    border-radius: 4px; font-size: 11px; color: var(--fg); display: none; z-index: 1000;
+  }
+  #toast.error { border-color: var(--error); color: var(--error); }
+  #toast.show { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>qwen36-harness</h1>
+  <span class="sub" id="endpoint-sub">—</span>
+  <label>endpoint
+    <select id="ep-select"></select>
+  </label>
+  <label>mode
+    <select id="mode-select">
+      <option>thinking</option>
+      <option>nonthinking</option>
+      <option>coding</option>
+    </select>
+  </label>
+  <label>max
+    <input id="max-input" type="number" min="1" max="32768" style="width: 62px;">
+  </label>
+  <label>temp
+    <input id="temp-input" type="number" min="0" max="2" step="0.1" style="width: 48px;">
+  </label>
+  <label><input type="checkbox" id="agent-toggle"> agent</label>
+  <label><input type="checkbox" id="think-toggle"> show reasoning</label>
+  <span class="grow"></span>
+  <button id="settings-btn" title="System prompt">/system</button>
+  <button id="clear-btn" class="danger">/clear</button>
+</header>
+
+<aside class="left">
+  <h2>Tools</h2>
+  <div id="tools-list"></div>
+</aside>
+
+<main>
+  <div id="chat"></div>
+  <div id="input-area">
+    <textarea id="user-input" placeholder="message  (Ctrl+Enter to send, Esc cancels in-flight)"></textarea>
+    <button id="send-btn" class="primary">send</button>
+  </div>
+  <div id="status-bar">
+    <span class="stat">turn <strong id="stat-turn">0</strong></span>
+    <span class="stat">ttft <strong id="stat-ttft">-</strong></span>
+    <span class="stat"><strong id="stat-tps">-</strong> t/s</span>
+    <span class="stat"><strong id="stat-tokens">-</strong> tok</span>
+    <span class="stat"><strong id="stat-finish">-</strong></span>
+    <span class="grow"></span>
+    <span class="stat" id="stat-mode">-</span>
+    <span class="stat" id="stat-state">idle</span>
+  </div>
+</main>
+
+<aside class="right">
+  <h2>MCP servers</h2>
+  <div id="mcp-list"></div>
+  <h2 style="margin-top: 16px;">Sandbox</h2>
+  <div class="row"><span class="name" id="sandbox-path" style="font-size:10px; color:var(--fg3);">—</span></div>
+</aside>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const chat = $('chat');
+let state = null;
+let inFlight = false;
+let currentAssistantMsg = null;
+let currentReasoning = null;
+let pendingToolPanels = {};  // by tool_call_id
+
+function toast(msg, isError = false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show' + (isError ? ' error' : '');
+  setTimeout(() => { t.className = ''; }, 2200);
+}
+
+async function api(path, options = {}) {
+  const r = await fetch(path, {
+    method: options.method || 'GET',
+    headers: options.body ? {'Content-Type': 'application/json'} : {},
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+  if (!r.ok) {
+    const err = await r.text();
+    throw new Error(`${r.status}: ${err}`);
+  }
+  return r.json();
+}
+
+async function refreshState() {
+  state = await api('/api/state');
+  renderHeader();
+  renderTools();
+  renderMCP();
+  $('sandbox-path').textContent = state.sandbox_root;
+  $('stat-mode').textContent = state.mode;
+  $('stat-turn').textContent = state.turn_count;
+  if (state.last_stats && Object.keys(state.last_stats).length) {
+    renderStats(state.last_stats);
+  }
+}
+
+function renderHeader() {
+  $('endpoint-sub').textContent = `${state.current_endpoint} · ${state.mode}`;
+  const epSel = $('ep-select');
+  epSel.innerHTML = '';
+  state.endpoints.forEach(e => {
+    const o = document.createElement('option');
+    o.value = e.name;
+    o.textContent = `${e.name} (${e.model.split('/').pop()})`;
+    o.selected = e.current;
+    epSel.appendChild(o);
+  });
+  $('mode-select').value = state.mode;
+  $('max-input').value = state.max_tokens;
+  $('temp-input').value = state.temperature;
+  $('agent-toggle').checked = state.agent_mode;
+  $('think-toggle').checked = state.show_thinking;
+}
+
+function renderTools() {
+  const list = $('tools-list');
+  list.innerHTML = '';
+  state.tools.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.title = t.description;
+    const pill = document.createElement('span');
+    pill.className = 'pill ' + (t.enabled ? 'on' : 'off');
+    pill.textContent = t.enabled ? 'on' : 'off';
+    pill.style.cursor = 'pointer';
+    pill.onclick = async () => {
+      try {
+        await api(`/api/tools/${encodeURIComponent(t.name)}/toggle`,
+                  {method: 'POST', body: {enabled: !t.enabled}});
+        await refreshState();
+      } catch (e) { toast(e.message, true); }
+    };
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = t.name;
+    if (t.is_mcp) {
+      const m = document.createElement('span');
+      m.className = 'pill mcp'; m.textContent = 'MCP';
+      m.style.marginLeft = '4px';
+      name.appendChild(m);
+    }
+    row.appendChild(pill);
+    row.appendChild(name);
+    list.appendChild(row);
+  });
+  if (!state.tools.length) {
+    list.innerHTML = '<div class="row"><span class="desc">no tools registered</span></div>';
+  }
+}
+
+function renderMCP() {
+  const list = $('mcp-list');
+  list.innerHTML = '';
+  if (!state.mcp.length) {
+    list.innerHTML = '<div class="row"><span class="desc">no MCP servers configured</span></div>';
+    return;
+  }
+  state.mcp.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.flexWrap = 'wrap';
+    const pill = document.createElement('span');
+    pill.className = 'pill ' + (s.running ? 'up' : 'down');
+    pill.textContent = s.running ? 'up' : 'down';
+    const name = document.createElement('span');
+    name.className = 'name'; name.textContent = s.name;
+    name.style.fontWeight = '600';
+    const btn = document.createElement('button');
+    btn.style.fontSize = '10px'; btn.style.padding = '1px 6px';
+    btn.textContent = s.running ? 'stop' : 'start';
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        const action = s.running ? 'stop' : 'start';
+        await api(`/api/mcp/${encodeURIComponent(s.name)}/${action}`, {method: 'POST'});
+        toast(`${s.name} ${action}ed`);
+        await refreshState();
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+    };
+    row.appendChild(pill);
+    row.appendChild(name);
+    row.appendChild(btn);
+    if (s.tools && s.tools.length) {
+      const t = document.createElement('div');
+      t.style.flex = '0 0 100%';
+      t.style.fontSize = '10px';
+      t.style.color = 'var(--fg3)';
+      t.style.paddingLeft = '6px';
+      t.textContent = s.tools.length + ' tool(s)';
+      t.title = s.tools.join(', ');
+      row.appendChild(t);
+    }
+    list.appendChild(row);
+  });
+}
+
+function renderStats(s) {
+  $('stat-ttft').textContent = (s.ttft_ms != null) ? `${Math.round(s.ttft_ms)}ms` : '-';
+  $('stat-tps').textContent = (s.tokens_per_sec != null) ? s.tokens_per_sec.toFixed(1) : '-';
+  $('stat-tokens').textContent = (s.completion_tokens != null) ? s.completion_tokens : '-';
+  $('stat-finish').textContent = s.finish_reason || '-';
+}
+
+function appendUserMsg(text) {
+  const div = document.createElement('div');
+  div.className = 'msg user';
+  div.appendChild(Object.assign(document.createElement('pre'), {textContent: text}));
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function startAssistantMsg() {
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  chat.appendChild(div);
+  currentAssistantMsg = div;
+  currentReasoning = null;
+  pendingToolPanels = {};
+  return div;
+}
+
+function appendReasoning(text) {
+  if (!state.show_thinking) return;
+  if (!currentReasoning) {
+    currentReasoning = document.createElement('div');
+    currentReasoning.className = 'reasoning';
+    currentReasoning._buffer = '';
+    currentAssistantMsg.appendChild(currentReasoning);
+  }
+  currentReasoning._buffer += text;
+  currentReasoning.textContent = currentReasoning._buffer;
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function appendContent(text) {
+  let pre = currentAssistantMsg.querySelector('pre.content');
+  if (!pre) {
+    pre = document.createElement('pre');
+    pre.className = 'content';
+    pre._buffer = '';
+    currentAssistantMsg.appendChild(pre);
+  }
+  pre._buffer += text;
+  pre.textContent = pre._buffer;
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function appendToolPanel(data) {
+  // data has: id, name, arguments
+  const panel = document.createElement('div');
+  panel.className = 'tool-panel open';
+  const head = document.createElement('div');
+  head.className = 'tool-head';
+  head.innerHTML = `<span class="arrow">▼</span><span class="tool-name">${data.name || '?'}</span><span class="tool-status">running...</span>`;
+  head.onclick = () => panel.classList.toggle('open');
+  const body = document.createElement('div');
+  body.className = 'tool-body';
+  const argLabel = document.createElement('div');
+  argLabel.className = 'label'; argLabel.textContent = 'arguments';
+  const argPre = document.createElement('pre');
+  try {
+    let args = data.arguments;
+    if (typeof args === 'string') args = JSON.parse(args);
+    argPre.textContent = JSON.stringify(args, null, 2);
+  } catch { argPre.textContent = String(data.arguments); }
+  body.appendChild(argLabel);
+  body.appendChild(argPre);
+  panel.appendChild(head);
+  panel.appendChild(body);
+  currentAssistantMsg.appendChild(panel);
+  pendingToolPanels[data.id || data.name] = {panel, head, body, t0: performance.now()};
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function fillToolPanel(data) {
+  const key = data.id || data.name;
+  const slot = pendingToolPanels[key] || pendingToolPanels[data.name];
+  if (!slot) {
+    // no matching panel; build a fresh one
+    appendToolPanel({id: data.id, name: data.name, arguments: '?'});
+    return fillToolPanel(data);
+  }
+  const dur = (performance.now() - slot.t0) | 0;
+  const isErr = !!data.is_error;
+  if (isErr) slot.panel.classList.add('error');
+  slot.head.querySelector('.tool-status').textContent =
+    (isErr ? 'error · ' : 'ok · ') + dur + 'ms';
+  const resLabel = document.createElement('div');
+  resLabel.className = 'label'; resLabel.textContent = isErr ? 'error' : 'result';
+  const resPre = document.createElement('pre');
+  resPre.textContent = data.output || '';
+  slot.body.appendChild(resLabel);
+  slot.body.appendChild(resPre);
+  // Auto-collapse successful tool calls to keep the chat tidy
+  if (!isErr) slot.panel.classList.remove('open');
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function sendMessage() {
+  const ta = $('user-input');
+  const text = ta.value.trim();
+  if (!text || inFlight) return;
+  inFlight = true;
+  $('stat-state').textContent = 'streaming...';
+  $('send-btn').textContent = 'cancel';
+  $('send-btn').classList.remove('primary'); $('send-btn').classList.add('danger');
+  ta.value = '';
+  appendUserMsg(text);
+  startAssistantMsg();
+
+  // SSE via fetch + ReadableStream (EventSource doesn't do POST)
+  let response;
+  try {
+    response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text}),
+    });
+  } catch (e) {
+    toast(e.message, true);
+    finishStream();
+    return;
+  }
+  if (!response.ok) {
+    toast('chat failed: ' + response.status, true);
+    finishStream();
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      // SSE event delimiter is a blank line: \n\n, \r\n\r\n, or \r\r.
+      // Find whichever appears first.
+      while (true) {
+        let cut = -1, sepLen = 2;
+        const a = buf.indexOf('\r\n\r\n');
+        const b = buf.indexOf('\n\n');
+        const c = buf.indexOf('\r\r');
+        if (a !== -1 && (cut === -1 || a < cut)) { cut = a; sepLen = 4; }
+        if (b !== -1 && (cut === -1 || b < cut)) { cut = b; sepLen = 2; }
+        if (c !== -1 && (cut === -1 || c < cut)) { cut = c; sepLen = 2; }
+        if (cut === -1) break;
+        const block = buf.slice(0, cut);
+        buf = buf.slice(cut + sepLen);
+        handleSSEBlock(block);
+      }
+    }
+  } catch (e) {
+    toast('stream error: ' + e.message, true);
+  }
+  finishStream();
+  await refreshState();
+}
+
+function handleSSEBlock(block) {
+  let event = 'message', data = '';
+  block.split(/\r?\n/).forEach(line => {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  });
+  let parsed = {};
+  try { parsed = data ? JSON.parse(data) : {}; } catch {}
+  switch (event) {
+    case 'user': break;
+    case 'reasoning': appendReasoning(parsed.text || ''); break;
+    case 'content':   appendContent(parsed.text || ''); break;
+    case 'tool_call': appendToolPanel(parsed.data || {}); break;
+    case 'tool_result': fillToolPanel(parsed.data || {}); break;
+    case 'llm_start': break;
+    case 'llm_end':
+      if (parsed.data && parsed.data.finish_reason) {
+        $('stat-finish').textContent = parsed.data.finish_reason;
+      }
+      break;
+    case 'done':
+      if (parsed.data) {
+        if (parsed.data.total_tokens != null) {
+          $('stat-tokens').textContent = parsed.data.total_tokens;
+        }
+        if (parsed.data.stats) renderStats(parsed.data.stats);
+      }
+      break;
+    case 'error':
+      const e = document.createElement('div');
+      e.className = 'msg system';
+      e.style.color = 'var(--error)';
+      e.style.borderColor = 'var(--error)';
+      e.textContent = '[error] ' + (parsed.error || data);
+      chat.appendChild(e);
+      break;
+    case 'cancelled':
+      const c = document.createElement('div');
+      c.className = 'msg system';
+      c.textContent = '[cancelled]';
+      chat.appendChild(c);
+      break;
+    case 'end': break;
+    default: break;
+  }
+}
+
+function finishStream() {
+  inFlight = false;
+  $('stat-state').textContent = 'idle';
+  $('send-btn').textContent = 'send';
+  $('send-btn').classList.remove('danger'); $('send-btn').classList.add('primary');
+}
+
+// --- wire controls ---
+$('send-btn').onclick = async () => {
+  if (inFlight) {
+    await api('/api/cancel', {method: 'POST'});
+  } else {
+    await sendMessage();
+  }
+};
+$('user-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); }
+  else if (e.key === 'Escape' && inFlight) { api('/api/cancel', {method: 'POST'}); }
+});
+$('clear-btn').onclick = async () => {
+  await api('/api/clear', {method: 'POST'});
+  chat.innerHTML = '';
+  await refreshState();
+  toast('conversation cleared');
+};
+$('settings-btn').onclick = async () => {
+  const cur = state.system || '';
+  const next = prompt('System prompt (empty to clear):', cur);
+  if (next === null) return;
+  await api('/api/system', {method: 'POST', body: {text: next || null}});
+  await refreshState();
+  toast('system prompt updated');
+};
+$('ep-select').onchange = async (e) => {
+  await api('/api/use', {method: 'POST', body: {endpoint: e.target.value}});
+  await refreshState();
+};
+async function pushSettings(patch) {
+  await api('/api/settings', {method: 'POST', body: patch});
+  await refreshState();
+}
+$('mode-select').onchange = (e) => pushSettings({mode: e.target.value});
+$('max-input').onchange  = (e) => pushSettings({max_tokens: parseInt(e.target.value)});
+$('temp-input').onchange = (e) => pushSettings({temperature: parseFloat(e.target.value)});
+$('agent-toggle').onchange = (e) => pushSettings({agent_mode: e.target.checked});
+$('think-toggle').onchange = (e) => pushSettings({show_thinking: e.target.checked});
+
+refreshState().catch(e => toast('init failed: ' + e.message, true));
+</script>
+</body>
+</html>

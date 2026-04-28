@@ -16,6 +16,9 @@ dependencies = [
     "rich>=13.7",
     "aiohttp>=3.9",
     "mcp>=1.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.30",
+    "sse-starlette>=2.0",
 ]
 
 [project.optional-dependencies]
