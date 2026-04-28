@@ -25,8 +25,13 @@ from rich.prompt import Prompt
 from rich.rule import Rule
 from rich.text import Text
 
+from .agent import Agent, AgentEvent, AgentLimits
 from .client import HarnessClient, StreamEvent
 from .config import Config, Endpoint, load_config
+from .tools import default_registry
+from .tools.calc import register as register_calc
+from .tools.cerebro import register as register_cerebro
+from .tools.filesystem import FsSandbox, register as register_fs
 
 # --- styling ------------------------------------------------------------------
 
@@ -76,6 +81,10 @@ HELP = """
   /temp <f>            set temperature for next message
   /system <text>       set/replace system prompt (also: /system to clear)
   /think on|off        show or hide reasoning_content stream
+  /tools               list registered tools and their state
+  /tools on|off <name> enable/disable a specific tool
+  /agent on|off        toggle tool-loop mode (default off = plain chat)
+  /sandbox             show filesystem sandbox root
   /clear               drop conversation history (keeps system prompt)
   /save [path]         save transcript as JSON
   /info                current state, last response stats
@@ -136,7 +145,7 @@ async def stream_one_turn(
     temperature: float,
     show_thinking: bool,
 ) -> tuple[str, str, dict[str, Any]]:
-    """Stream a single assistant turn. Returns (content, reasoning, stats)."""
+    """Stream a single assistant turn (no tools). Returns (content, reasoning, stats)."""
     content_buf: list[str] = []
     reasoning_buf: list[str] = []
     started_content = False
@@ -159,20 +168,19 @@ async def stream_one_turn(
                     console.print(Rule(title="reasoning", style="dim"))
                     started_reasoning = True
                 console.print(Text(ev.text, style=C_REASONING), end="")
+                reasoning_buf.append(ev.text)
                 if t_first_token is None:
                     t_first_token = time.perf_counter()
             elif ev.kind == "reasoning":
-                # Hidden — still buffer for the transcript / for stats
                 reasoning_buf.append(ev.text)
                 if t_first_token is None:
                     t_first_token = time.perf_counter()
             elif ev.kind == "content":
                 if started_reasoning:
-                    console.print()  # newline after reasoning block
+                    console.print()
                     console.print(Rule(title="answer", style=C_OK))
                     started_reasoning = False
-                if not started_content:
-                    started_content = True
+                started_content = True
                 console.print(Text(ev.text, style=C_ASSISTANT), end="")
                 content_buf.append(ev.text)
                 if t_first_token is None:
@@ -184,14 +192,9 @@ async def stream_one_turn(
             elif ev.kind == "error":
                 console.print()
                 console.print(Panel(ev.text, title="error", border_style=C_ERR))
-
-            # also need to capture reasoning text we displayed
-            if ev.kind == "reasoning" and show_thinking:
-                reasoning_buf.append(ev.text)
-
     except KeyboardInterrupt:
         console.print()
-        console.print(f"[{C_SYS}](generation cancelled by user)[/]")
+        console.print(f"[{C_SYS}](generation cancelled)[/]")
         finish_reason = "cancelled"
 
     elapsed = time.perf_counter() - t_start
@@ -217,11 +220,132 @@ async def stream_one_turn(
     return "".join(content_buf), "".join(reasoning_buf), stats
 
 
+async def stream_agent_turn(
+    client: HarnessClient,
+    convo: Conversation,
+    *,
+    max_tokens: int,
+    temperature: float,
+    show_thinking: bool,
+) -> tuple[str, str, dict[str, Any]]:
+    """Run an agent (tool-using) turn. Returns the FINAL (content, reasoning, stats)."""
+    agent = Agent(client, registry=default_registry, limits=AgentLimits(max_turns=8))
+    messages = convo.messages()  # snapshot list to mutate
+    started_reasoning = False
+    started_content = False
+    content_buf: list[str] = []
+    reasoning_buf: list[str] = []
+    t_start = time.perf_counter()
+    t_first_token: float | None = None
+    finish_reason = ""
+    total_tokens = 0
+    turns_observed = 0
+
+    try:
+        async for ev in agent.run(
+            messages, max_tokens=max_tokens, temperature=temperature
+        ):
+            if ev.kind == "llm_start":
+                if ev.data["turn"] > 1:
+                    console.print()
+                    console.print(Rule(title=f"turn {ev.data['turn']}", style=C_SYS))
+                turns_observed = ev.data["turn"]
+                started_reasoning = False
+                started_content = False
+
+            elif ev.kind == "reasoning":
+                if show_thinking:
+                    if not started_reasoning:
+                        console.print(Rule(title="reasoning", style="dim"))
+                        started_reasoning = True
+                    console.print(Text(ev.text, style=C_REASONING), end="")
+                reasoning_buf.append(ev.text)
+                if t_first_token is None:
+                    t_first_token = time.perf_counter()
+
+            elif ev.kind == "content":
+                if started_reasoning:
+                    console.print()
+                    console.print(Rule(title="answer", style=C_OK))
+                    started_reasoning = False
+                started_content = True
+                console.print(Text(ev.text, style=C_ASSISTANT), end="")
+                content_buf.append(ev.text)
+                if t_first_token is None:
+                    t_first_token = time.perf_counter()
+
+            elif ev.kind == "tool_call":
+                if started_content or started_reasoning:
+                    console.print()
+                args_repr = json.dumps(ev.data.get("arguments", {}), ensure_ascii=False)
+                if len(args_repr) > 200:
+                    args_repr = args_repr[:200] + "..."
+                console.print(
+                    f"[{C_TOOL}]→ {ev.data['name']}({args_repr})[/]"
+                )
+
+            elif ev.kind == "tool_result":
+                output = ev.data.get("output", "")
+                preview = output[:400] + ("..." if len(output) > 400 else "")
+                style = C_ERR if ev.data.get("is_error") else C_SYS
+                console.print(
+                    Panel(
+                        preview,
+                        title=f"← {ev.data['name']}{'  (error)' if ev.data.get('is_error') else ''}",
+                        border_style=style,
+                        padding=(0, 1),
+                    )
+                )
+                # reset state since model will start a new turn after
+                started_content = False
+                started_reasoning = False
+
+            elif ev.kind == "llm_end":
+                finish_reason = ev.data.get("finish_reason", "")
+
+            elif ev.kind == "done":
+                finish_reason = "agent:" + ev.data.get("reason", "?")
+                total_tokens = ev.data.get("total_tokens", 0)
+
+            elif ev.kind == "error":
+                console.print()
+                console.print(Panel(ev.text, title="error", border_style=C_ERR))
+    except KeyboardInterrupt:
+        console.print()
+        console.print(f"[{C_SYS}](agent cancelled)[/]")
+        finish_reason = "cancelled"
+
+    # Replay messages back into convo (the agent appended to a snapshot)
+    # We discard the snapshot and just record the LAST assistant content as
+    # the turn for transcript purposes; full tool messages live only in the
+    # snapshot and get GC'd. Cleaner UX, no schema mismatch on /save.
+    elapsed = time.perf_counter() - t_start
+    ttft = (t_first_token - t_start) if t_first_token else 0.0
+    stats = {
+        "completion_tokens": total_tokens,  # rough — agent sums total
+        "elapsed_s": round(elapsed, 3),
+        "ttft_s": round(ttft, 3),
+        "turns": turns_observed,
+        "finish_reason": finish_reason,
+    }
+    console.print()
+    console.print(
+        f"[{C_SYS}]"
+        f"agent: turns={turns_observed}  "
+        f"total_tokens={total_tokens}  "
+        f"ttft={stats['ttft_s']}s  "
+        f"elapsed={stats['elapsed_s']}s  "
+        f"finish={finish_reason}"
+        f"[/]"
+    )
+    return "".join(content_buf), "".join(reasoning_buf), stats
+
+
 # --- slash command handler ----------------------------------------------------
 
 
 class State:
-    def __init__(self, cfg: Config, ep: Endpoint) -> None:
+    def __init__(self, cfg: Config, ep: Endpoint, sandbox: FsSandbox) -> None:
         self.cfg = cfg
         self.ep = ep
         self.client = HarnessClient(ep)
@@ -229,6 +353,8 @@ class State:
         self.show_thinking = True
         self.max_tokens = ep.default_max_tokens
         self.temperature = ep.default_temperature
+        self.sandbox = sandbox
+        self.agent_mode = False  # toggle with /agent on
 
     async def switch_endpoint(self, name: str) -> None:
         try:
@@ -319,6 +445,36 @@ async def handle_slash(state: State, line: str) -> bool:
         else:
             console.print(f"[{C_ERR}]usage: /think on|off[/]")
 
+    elif cmd == "/tools":
+        sub = arg.split(maxsplit=1) if arg else []
+        if not sub:
+            for name in default_registry.names():
+                spec = default_registry.get(name)
+                state_str = (
+                    f"[{C_OK}]on[/] " if spec.enabled else f"[{C_ERR}]off[/]"
+                )
+                cf = " (confirm)" if spec.requires_confirmation else ""
+                console.print(f" {state_str} [{C_TOOL}]{name:<22}[/]{cf}  [{C_SYS}]{spec.description[:80]}[/]")
+        elif len(sub) == 2 and sub[0] in ("on", "off"):
+            tname = sub[1].strip()
+            try:
+                default_registry.set_enabled(tname, sub[0] == "on")
+                console.print(f"[{C_OK}]{tname} = {sub[0]}[/]")
+            except KeyError as e:
+                console.print(f"[{C_ERR}]{e}[/]")
+        else:
+            console.print(f"[{C_ERR}]usage: /tools  OR  /tools on|off <name>[/]")
+
+    elif cmd == "/agent":
+        if arg in ("on", "off"):
+            state.agent_mode = arg == "on"
+            console.print(f"[{C_OK}]agent-mode = {state.agent_mode}[/]")
+        else:
+            console.print(f"[{C_ERR}]usage: /agent on|off[/]")
+
+    elif cmd == "/sandbox":
+        console.print(f"[{C_OK}]fs sandbox root: {state.sandbox.root}[/]")
+
     elif cmd == "/clear":
         state.convo.turns.clear()
         console.print(f"[{C_OK}]history cleared[/]")
@@ -380,13 +536,24 @@ async def chat_loop(args: argparse.Namespace) -> int:
         console.print(f"[{C_ERR}]{e}[/]")
         return 1
 
-    state = State(cfg, ep)
+    # Register builtin tools on the default registry. Idempotent-ish: failure
+    # in cerebro just disables those tools.
+    sandbox = register_fs(default_registry, sandbox=FsSandbox(args.sandbox or None))
+    register_calc(default_registry)
+    register_cerebro(default_registry)
+
+    state = State(cfg, ep, sandbox)
     if args.system:
         state.convo.system = args.system
     if args.mode:
         await handle_slash(state, f"/mode {args.mode}")
+    if args.agent:
+        state.agent_mode = True
 
     banner(cfg, state.ep, show_thinking=state.show_thinking)
+    if state.agent_mode:
+        console.print(f"[{C_OK}]agent-mode ON[/]  — tools: " + ", ".join(default_registry.names()))
+    console.print(f"[{C_SYS}]fs sandbox: {sandbox.root}[/]")
 
     while True:
         try:
@@ -405,11 +572,18 @@ async def chat_loop(args: argparse.Namespace) -> int:
 
         state.convo.add_user(line)
         console.print()
-        content, reasoning, stats = await stream_one_turn(
-            state.client, state.convo,
-            max_tokens=state.max_tokens, temperature=state.temperature,
-            show_thinking=state.show_thinking,
-        )
+        if state.agent_mode:
+            content, reasoning, stats = await stream_agent_turn(
+                state.client, state.convo,
+                max_tokens=state.max_tokens, temperature=state.temperature,
+                show_thinking=state.show_thinking,
+            )
+        else:
+            content, reasoning, stats = await stream_one_turn(
+                state.client, state.convo,
+                max_tokens=state.max_tokens, temperature=state.temperature,
+                show_thinking=state.show_thinking,
+            )
         state.convo.add_assistant(content, reasoning)
         state.convo.last_stats = stats
         console.print()
@@ -426,6 +600,8 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--endpoint", "-e", help="endpoint name (default from config)")
     chat.add_argument("--mode", choices=["thinking", "nonthinking", "coding"])
     chat.add_argument("--system", "-s", help="system prompt")
+    chat.add_argument("--agent", action="store_true", help="enable tool-loop agent mode")
+    chat.add_argument("--sandbox", help="fs sandbox root (default ~/qwen36-sandbox)")
 
     args = p.parse_args(argv)
     if args.command == "chat":
