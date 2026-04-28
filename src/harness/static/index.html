@@ -83,6 +83,19 @@
   .pill.up  { background: var(--accent); color: #000; }
   .pill.down{ background: var(--error); color: #fff; }
   .pill.mcp { background: var(--accent2); color: #000; }
+  .pill.error { background: var(--error); color: #fff; }
+  .pill.pending { background: var(--warn); color: #000; }
+
+  /* CRON JOB ROWS */
+  .cron-row { display: flex; flex-direction: column; gap: 3px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 10px; }
+  .cron-row:last-child { border-bottom: none; }
+  .cron-head { display: flex; align-items: center; gap: 4px; }
+  .cron-head .name { color: var(--fg); font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cron-meta { display: flex; gap: 8px; padding-left: 14px; color: var(--fg3); font-size: 9px; }
+  .cron-actions { display: flex; gap: 3px; margin-top: 2px; }
+  .cron-actions button { font-size: 9px; padding: 1px 5px; border-radius: 3px; background: var(--bg4); color: var(--fg2); border: 1px solid var(--border); cursor: pointer; font-family: inherit; }
+  .cron-actions button:hover { border-color: var(--accent2); color: var(--accent2); }
+  .cron-actions button.stop-btn:hover { border-color: var(--warn); color: var(--warn); }
 
   /* MAIN CHAT */
   main {
@@ -218,6 +231,8 @@
 <aside class="right">
   <h2>MCP servers</h2>
   <div id="mcp-list"></div>
+  <h2 style="margin-top: 16px;">Cron Jobs</h2>
+  <div id="cron-list"></div>
   <h2 style="margin-top: 16px;">Sandbox</h2>
   <div class="row"><span class="name" id="sandbox-path" style="font-size:10px; color:var(--fg3);">—</span></div>
 </aside>
@@ -258,6 +273,7 @@ async function refreshState() {
   renderHeader();
   renderTools();
   renderMCP();
+  renderCron();
   $('sandbox-path').textContent = state.sandbox_root;
   $('stat-mode').textContent = state.mode;
   $('stat-turn').textContent = state.turn_count;
@@ -595,6 +611,105 @@ function finishStream() {
   $('stat-state').textContent = 'idle';
   $('send-btn').textContent = 'send';
   $('send-btn').classList.remove('danger'); $('send-btn').classList.add('primary');
+}
+
+// --- cron jobs ---------------------------------------------------------------
+
+function renderCron() {
+  const list = $('cron-list');
+  list.innerHTML = '';
+  const jobs = state.cron || [];
+  if (!jobs.length) {
+    list.innerHTML = '<div class="row"><span class="desc">no cron jobs registered</span></div>';
+    return;
+  }
+  jobs.forEach(j => {
+    const row = document.createElement('div');
+    row.className = 'cron-row';
+
+    // Head: name + status pill
+    const head = document.createElement('div');
+    head.className = 'cron-head';
+    const pill = document.createElement('span');
+    if (j.status === 'error') {
+      pill.className = 'pill error';
+      pill.textContent = 'err';
+    } else if (j.running) {
+      pill.className = 'pill up';
+      pill.textContent = 'run';
+    } else {
+      pill.className = 'pill pending';
+      pill.textContent = j.status || '?';
+    }
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = j.name;
+    name.title = j.cmd || '';
+    head.appendChild(pill);
+    head.appendChild(name);
+
+    // Meta: interval, runs
+    const meta = document.createElement('div');
+    meta.className = 'cron-meta';
+    const iv = document.createElement('span');
+    iv.textContent = j.interval_s ? j.interval_s + 's' : 'one-shot';
+    const rc = document.createElement('span');
+    rc.textContent = j.runs + ' runs';
+    meta.appendChild(iv);
+    meta.appendChild(rc);
+
+    // Actions: run_now | stop | remove
+    const actions = document.createElement('div');
+    actions.className = 'cron-actions';
+
+    const runBtn = document.createElement('button');
+    runBtn.textContent = '▶';
+    runBtn.title = 'Run now';
+    runBtn.onclick = async () => {
+      try {
+        await api('/api/cron/' + encodeURIComponent(j.name) + '/run_now', {method: 'POST'});
+        toast('ran: ' + j.name);
+        await refreshState();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    actions.appendChild(runBtn);
+
+    if (!j.running) {
+      const stopBtn = document.createElement('button');
+      stopBtn.textContent = '■';
+      stopBtn.className = 'stop-btn';
+      stopBtn.title = 'Stop job';
+      stopBtn.onclick = async () => {
+        try {
+          await api('/api/cron/' + encodeURIComponent(j.name) + '/stop', {method: 'POST'});
+          toast('stopped: ' + j.name);
+          await refreshState();
+        } catch (e) { toast(e.message, true); }
+      };
+      actions.appendChild(stopBtn);
+    }
+
+    const remBtn = document.createElement('button');
+    remBtn.textContent = '✕';
+    remBtn.title = 'Remove job';
+    remBtn.style.color = 'var(--error)';
+    remBtn.onclick = async () => {
+      if (confirm('Remove cron job "' + j.name + '"?')) {
+        try {
+          await api('/api/cron/' + encodeURIComponent(j.name) + '/stop', {method: 'POST'});
+          await refreshState();
+          toast('removed: ' + j.name);
+        } catch (e) { toast(e.message, true); }
+      }
+    };
+    actions.appendChild(remBtn);
+
+    row.appendChild(head);
+    row.appendChild(meta);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
 }
 
 // --- wire controls ---

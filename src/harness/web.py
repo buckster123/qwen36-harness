@@ -49,6 +49,7 @@ from .mcp import MCPManager, MCPServerConfig, load_mcp_config
 from .tools import default_registry
 from .tools.calc import register as register_calc
 from .tools.cron import register as register_cron
+from .tools.cron import scheduler as cron_scheduler
 from .tools.filesystem import FsSandbox, register as register_fs
 
 log = logging.getLogger(__name__)
@@ -172,6 +173,7 @@ def _state_payload(session: WebSession) -> dict[str, Any]:
         "sandbox_root": str(session.sandbox.root),
         "tools": tools,
         "mcp": mcp_status,
+        "cron": cron_scheduler.list_jobs(),
         "turn_count": len(session.turns),
         "last_stats": session.last_stats,
     }
@@ -294,6 +296,24 @@ def create_app(
     @app.post("/api/mcp/{name}/stop")
     async def mcp_stop(name: str) -> dict[str, Any]:
         await session.mcp.stop(name)
+        return {"ok": True}
+
+    # --- cron ---------------------------------------------------------------
+
+    @app.post("/api/cron/{name}/run_now")
+    async def cron_run(name: str) -> dict[str, Any]:
+        try:
+            result = cron_scheduler.run_once(name)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, str(e)) from e
+        return {"ok": True, "result": result}
+
+    @app.post("/api/cron/{name}/stop")
+    async def cron_stop(name: str) -> dict[str, Any]:
+        try:
+            cron_scheduler.stop(name)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, str(e)) from e
         return {"ok": True}
 
     # --- chat (SSE) ---------------------------------------------------------
