@@ -455,6 +455,10 @@ real agentic driver before we trust it for anything serious.
   Before: `tools/cerebro.py` had 3 manual wrappers (recall, remember, list_episodes).
   Now: All 42 CC tools wire in via harness's existing `MCPManager` as stdio subprocess.
 
+- **Phase 4.2** — System prompt file + stats/TPS UI fix (`src/harness/agent.py` explicit `stats` event emission)
+- **Phase 4.3** — Cron scheduler backend: pure-Python threaded `Scheduler` with 5 tools (`cron_register`, `cron_run_now`, `cron_list`, `cron_stop`, `cron_remove`)
+- **Phase 4.4** — Cron Jobs web panel in right sidebar: status pills (up/error/pending), interval/runs metadata, ▶■✕ action buttons, auto-refresh on state update
+
 ### 🔧 How the MCP route works
 
 1. Add `[servers.cerebro]` to `configs/mcp_servers.toml`:
@@ -484,12 +488,12 @@ real agentic driver before we trust it for anything serious.
 
 ### ⏳ Deferred / Pending
 
-| Task | Status | Notes |
+|| Task | Status | Notes ||
 |---|---|---|
-| 4.2 Harness-as-CC's dream LLM | Not started | Edit `~/.cerebro-cortex/settings.json`, point to Vast Qwen3.6 endpoint |
-| 4.3 Integration docs | Not started | `docs/cerebro-integration.md` with diagram + example prompts |
-| Embedder mismatch | Known issue | CC store built with BGE-via-NPU; local is MiniLM. Fix: `cerebro doctor audit --fix-fingerprint` or reembed_collections.py. Benign for tool availability, affects recall quality of old memories. |
-| Phase 5 tool-piling experiments | Deferred | Wait until ctx window is freed up — don't stress the Vast box right now |
+| 4.5 Harness-as-CC's dream LLM | Not started | Edit `~/.cerebro-cortex/settings.json`, point to Vast Qwen3.6 endpoint ||
+| Integration docs | Drafted | `docs/cerebro-integration.md` skeleton exists; add diagram + example prompts ||
+| Embedder mismatch | Known issue | CC store built with BGE-via-NPU; local is MiniLM. Fix: `cerebro doctor audit --fix-fingerprint` or reembed_collections.py. Benign for tool availability, affects recall quality of old memories. ||
+| Phase 5 tool-piling experiments | Deferred | Wait until ctx window is freed up — don't stress the Vast box right now ||
 
 ### ⚠️ Known Issues
 
@@ -505,17 +509,21 @@ real agentic driver before we trust it for anything serious.
 │   ├── mcp_servers.toml      ← cerebro server config here
 │   └── endpoints.toml        ← Vast tunnel (:8800) + NPU endpoints
 ├── src/harness/
-│   ├── cli.py                → disabled manual cerebro wrapper (line ~33, ~592)
+│   ├── cli.py                → disabled manual cerebro wrapper, added cron registration
+│   ├── web.py                → FastAPI: /api/state (includes "cron" key), cron action endpoints (/run_now, /stop), stats-aware SSE stream
 │   ├── mcp.py                → MCPManager (auto-starts stdio servers from config)
-│   ├── agent.py              → tool-loop driver with streaming events
+│   ├── agent.py              → tool-loop driver with explicit "stats" event emission
 │   └── tools/
 │       ├── __init__.py       → Registry + ToolSpec + dispatch
 │       ├── filesystem.py     → sandboxed fs.* tools
 │       ├── calc.py           → sympy calculator
 │       ├── web.py            → fetch + search
+│       ├── cron.py           → threaded Scheduler singleton, 5 cron_* tools (register/run_now/list/stop/remove)
 │       └── cerebro.py        → OLD manual wrapper (disabled, kept for reference)
+├── static/index.html         ← dark theme UI: chat stream + left tools list + right MCP/Cron/Sandbox panels
 └── tests/
-    └── test_mcp_cerebro.py   ← 5 new integration tests (all passing)
+    ├── test_mcp_cerebro.py   ← 5 integration tests (all passing)
+    └── test_agent.py         ← agent loop event-order tests (62 pass, 7 skip)
 
 ~/projects/CerebroCortex/
 ├── cerebro-mcp               → stdio launcher script (sets CEREBRO_DATA_DIR, PATH, etc.)
