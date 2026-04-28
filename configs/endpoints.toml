@@ -8,8 +8,8 @@
 endpoint = "vast-qwen36-moe"
 
 [endpoints.vast-qwen36-moe]
-description = "Vast.ai NO 5090, Qwen3.6-35B-A3B Q5_K_XL, ~$0.40/hr"
-base_url = "http://79.160.189.79:12515/v1"
+description = "Vast.ai NO 5090 via SSH tunnel (127.0.0.1:8800), Qwen3.6-35B-A3B Q5_K_XL"
+base_url = "http://127.0.0.1:8800/v1"
 model    = "Qwen3.6-35B-A3B-UD-Q5_K_XL.gguf"
 api_key  = "sk-anything"
 default_max_tokens  = 2048
