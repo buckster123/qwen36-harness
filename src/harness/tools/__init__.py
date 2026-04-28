@@ -15,6 +15,12 @@ Design choices:
 - **Result is a string**: tools return whatever they want internally; the
   registry always coerces results to a UTF-8 string for the model's
   ``role: tool`` reply. JSON-serialisable dicts/lists get json.dumped.
+
+Loaded tool modules (all register against ``default_registry``):
+
+- **calc** — sympy expression evaluator
+- **cron** — background scheduler (daemon threads + subprocess)
+- **filesystem** — sandboxed fs.* read/list/write/search
 """
 
 from __future__ import annotations
@@ -193,6 +199,8 @@ def _coerce_to_string(value: Any) -> str:
 # instantiate their own ``Registry()`` for isolated test scenarios.
 default_registry = Registry()
 
+# Import tool modules — they register against default_registry at import time
+from . import calc, cron, filesystem  # noqa: E402
 
 __all__ = [
     "Registry",
@@ -200,4 +208,7 @@ __all__ = [
     "ToolResult",
     "ToolSpec",
     "default_registry",
+    "calc",
+    "cron",
+    "filesystem",
 ]

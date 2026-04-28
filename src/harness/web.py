@@ -48,6 +48,7 @@ from .config import Config, Endpoint, load_config
 from .mcp import MCPManager, MCPServerConfig, load_mcp_config
 from .tools import default_registry
 from .tools.calc import register as register_calc
+from .tools.cron import register as register_cron
 from .tools.filesystem import FsSandbox, register as register_fs
 
 log = logging.getLogger(__name__)
@@ -190,6 +191,7 @@ def create_app(
         if register_builtins:
             register_fs(default_registry, sandbox=sandbox)
             register_calc(default_registry)
+            register_cron(default_registry)
         session = WebSession(
             cfg=cfg,
             ep=ep,
