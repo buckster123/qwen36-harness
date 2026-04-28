@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local config / secrets
+.env
+.env.local
+configs/endpoints.local.toml
+
+# Harness data
+*.jsonl
+~/.local/share/qwen36-harness/
+docs/experiments/*-data/
+
+# OS
+.DS_Store
+Thumbs.db
