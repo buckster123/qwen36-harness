@@ -4,8 +4,22 @@ Personal agentic harness around a private Qwen3.6 endpoint (currently a Vast.ai
 RTX 5090 running llama.cpp + Unsloth UD GGUFs). Chat UI, tool registry, and
 bidirectional CerebroCortex integration.
 
-**Status:** Phase 0 — scaffolding. See `docs/plans/2026-04-28-qwen36-harness.md`
-for the full implementation plan.
+**Status:** Phase 2 SHIPPED (Apr 28, 2026, evening session). See
+`docs/plans/2026-04-28-qwen36-harness.md` for the full implementation plan.
+
+**Done:**
+- Phase 0   repo, venv, endpoint config loader (5 tests)
+- Phase 1   streaming httpx client, rich CLI chat (12 tests + 3 smoke)
+- Phase 1.5 SSH-tunnel lockdown, llama-server bound to 127.0.0.1, vast_tunnel.sh helper
+- Phase 2   tool registry, fs/calc/cerebro tools, agent loop, CLI integration
+            (35 unit tests + 5 smoke tests passing)
+
+**Live state:** Vast.ai NO 5090 instance 35758586 still running ($0.40/hr,
+~$1.50 burned across the evening). Tunnel up at `127.0.0.1:8800`. Default
+endpoint `vast-qwen36-moe` works end-to-end with agentic tool calls
+(verified via `tests/test_smoke_agent.py`).
+
+**Next up:** Phase 2.5 MCP client → Phase 3 web UI → Phase 4 real Cerebro wiring.
 
 ## Why this exists
 
