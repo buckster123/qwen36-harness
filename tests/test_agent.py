@@ -47,8 +47,11 @@ async def test_agent_terminates_on_first_final_answer() -> None:
     kinds = [e.kind for e in events]
     assert kinds.count("llm_start") == 1
     assert "content" in kinds
-    assert kinds[-1] == "done"
-    assert events[-1].data["reason"] == "final"
+    # stats is now the last event (comes after done)
+    assert kinds[-1] == "stats"
+    done_idx = kinds.index("done")
+    assert done_idx == len(kinds) - 2
+    assert events[done_idx].data["reason"] == "final"
     await client.aclose()
 
 
@@ -107,8 +110,10 @@ async def test_agent_dispatches_tool_then_continues() -> None:
     assert tool_results[0].data["output"] == "5"
     final_content = "".join(e.text for e in events if e.kind == "content")
     assert "5" in final_content
-    assert events[-1].kind == "done"
-    assert events[-1].data["reason"] == "final"
+    # done is second-to-last (stats comes after)
+    done_idx = kinds.index("done")
+    assert done_idx == len(events) - 2
+    assert events[done_idx].data["reason"] == "final"
     assert call_count["n"] == 2
     await client.aclose()
 
@@ -143,7 +148,10 @@ async def test_agent_respects_max_turns() -> None:
         mock.post("/v1/chat/completions").mock(side_effect=handler)
         events = [e async for e in agent.run([{"role": "user", "content": "go"}])]
 
-    assert events[-1].kind == "done"
-    assert events[-1].data["reason"] == "turn_limit"
-    assert events[-1].data["turns"] == 3
+    # done is second-to-last (stats comes after)
+    kinds = [e.kind for e in events]
+    done_idx = kinds.index("done")
+    assert done_idx == len(events) - 2
+    assert events[done_idx].data["reason"] == "turn_limit"
+    assert events[done_idx].data["turns"] == 3
     await client.aclose()

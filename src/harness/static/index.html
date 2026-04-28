@@ -369,7 +369,9 @@ function renderMCP() {
 
 function renderStats(s) {
   $('stat-ttft').textContent = (s.ttft_ms != null) ? `${Math.round(s.ttft_ms)}ms` : '-';
-  $('stat-tps').textContent = (s.tokens_per_sec != null) ? s.tokens_per_sec.toFixed(1) : '-';
+  // Accept both camelCase (from agent stats events) and snake_case (legacy)
+  const tps = s.tokens_per_second ?? s.tokens_per_sec;
+  $('stat-tps').textContent = (tps != null) ? Number(tps).toFixed(1) : '-';
   $('stat-tokens').textContent = (s.completion_tokens != null) ? s.completion_tokens : '-';
   $('stat-finish').textContent = s.finish_reason || '-';
 }
@@ -550,12 +552,23 @@ function handleSSEBlock(block) {
         $('stat-finish').textContent = parsed.data.finish_reason;
       }
       break;
+    case 'stats':
+      renderStats({
+        tokens_per_sec: parsed.data.tokens_per_second,
+        completion_tokens: parsed.data.completion_tokens,
+        prompt_tokens: parsed.data.prompt_tokens,
+        ttft_ms: parsed.data.ttft_ms,
+        finish_reason: '',  // done event handles this
+      });
+      break;
     case 'done':
       if (parsed.data) {
-        if (parsed.data.total_tokens != null) {
+        if (parsed.data.completion_tokens != null) {
+          $('stat-tokens').textContent = parsed.data.completion_tokens;
+        } else if (parsed.data.total_tokens != null) {
+          // fallback for pre-stats agent
           $('stat-tokens').textContent = parsed.data.total_tokens;
         }
-        if (parsed.data.stats) renderStats(parsed.data.stats);
       }
       break;
     case 'error':

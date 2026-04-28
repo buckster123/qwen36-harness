@@ -13,13 +13,17 @@ Stream contract — yields tagged events for any UI to render:
   ``tool_call``        — model invoked a tool (data: id, name, arguments)
   ``tool_result``      — dispatch finished (data: name, output, is_error)
   ``llm_end``          — model finished this turn (data: finish_reason)
-  ``done``             — agent loop terminated (data: turns, total_tokens)
+  ``done``             — agent loop terminated (data: turns, total_tokens,
+                         completion_tokens, prompt_tokens, response_time)
+  ``stats``            — session-level stats for UI display (tokens, tps)
   ``error``            — fatal error (text)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -65,13 +69,15 @@ class Agent:
         """Stream an agent loop. Yields ``AgentEvent``s; mutates ``messages`` in-place."""
         tools_schema = self.registry.export_schema(only=self.tools_enabled)
         total_tokens = 0
+        total_completion_tokens = 0
+        total_prompt_tokens = 0
         turn = 0
+        session_start = time.monotonic()
 
         while turn < self.limits.max_turns:
             turn += 1
             yield AgentEvent(kind="llm_start", data={"turn": turn})
 
-            # Stream the LLM step
             tool_calls_this_turn: list[dict[str, Any]] = []
             finish_reason = ""
             content_buf: list[str] = []
@@ -95,7 +101,10 @@ class Agent:
                     tool_calls_this_turn.append(ev.data)
                     yield AgentEvent(kind="tool_call", data=ev.data)
                 elif ev.kind == "usage":
-                    total_tokens += int(ev.data.get("total_tokens") or 0)
+                    usage = ev.data
+                    total_tokens += int(usage.get("total_tokens") or 0)
+                    total_completion_tokens += int(usage.get("completion_tokens") or 0)
+                    total_prompt_tokens += int(usage.get("prompt_tokens") or 0)
                 elif ev.kind == "done":
                     finish_reason = ev.data.get("finish_reason", "")
                 elif ev.kind == "error":
@@ -129,9 +138,28 @@ class Agent:
 
             # If no tool calls, we're done.
             if not tool_calls_this_turn or finish_reason != "tool_calls":
+                elapsed = time.monotonic() - session_start
+                tps = total_completion_tokens / elapsed if elapsed > 0 else 0
                 yield AgentEvent(
                     kind="done",
-                    data={"turns": turn, "total_tokens": total_tokens, "reason": "final"},
+                    data={
+                        "turns": turn,
+                        "total_tokens": total_tokens,
+                        "completion_tokens": total_completion_tokens,
+                        "prompt_tokens": total_prompt_tokens,
+                        "reason": "final",
+                    },
+                )
+                yield AgentEvent(
+                    kind="stats",
+                    data={
+                        "turns": turn,
+                        "total_tokens": total_tokens,
+                        "completion_tokens": total_completion_tokens,
+                        "prompt_tokens": total_prompt_tokens,
+                        "tokens_per_second": round(tps, 1),
+                        "elapsed_seconds": round(elapsed, 1),
+                    },
                 )
                 return
 
@@ -156,19 +184,53 @@ class Agent:
                 )
 
             if total_tokens >= self.limits.max_total_tokens:
+                elapsed = time.monotonic() - session_start
+                tps = total_completion_tokens / elapsed if elapsed > 0 else 0
                 yield AgentEvent(
                     kind="done",
                     data={
                         "turns": turn,
                         "total_tokens": total_tokens,
+                        "completion_tokens": total_completion_tokens,
+                        "prompt_tokens": total_prompt_tokens,
                         "reason": "token_limit",
+                    },
+                )
+                yield AgentEvent(
+                    kind="stats",
+                    data={
+                        "turns": turn,
+                        "total_tokens": total_tokens,
+                        "completion_tokens": total_completion_tokens,
+                        "prompt_tokens": total_prompt_tokens,
+                        "tokens_per_second": round(tps, 1),
+                        "elapsed_seconds": round(elapsed, 1),
                     },
                 )
                 return
 
+        elapsed = time.monotonic() - session_start
+        tps = total_completion_tokens / elapsed if elapsed > 0 else 0
         yield AgentEvent(
             kind="done",
-            data={"turns": turn, "total_tokens": total_tokens, "reason": "turn_limit"},
+            data={
+                "turns": turn,
+                "total_tokens": total_tokens,
+                "completion_tokens": total_completion_tokens,
+                "prompt_tokens": total_prompt_tokens,
+                "reason": "turn_limit",
+            },
+        )
+        yield AgentEvent(
+            kind="stats",
+            data={
+                "turns": turn,
+                "total_tokens": total_tokens,
+                "completion_tokens": total_completion_tokens,
+                "prompt_tokens": total_prompt_tokens,
+                "tokens_per_second": round(tps, 1),
+                "elapsed_seconds": round(elapsed, 1),
+            },
         )
 
 

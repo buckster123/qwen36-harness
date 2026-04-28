@@ -48,7 +48,6 @@ from .config import Config, Endpoint, load_config
 from .mcp import MCPManager, MCPServerConfig, load_mcp_config
 from .tools import default_registry
 from .tools.calc import register as register_calc
-from .tools.cerebro import register as register_cerebro
 from .tools.filesystem import FsSandbox, register as register_fs
 
 log = logging.getLogger(__name__)
@@ -191,7 +190,6 @@ def create_app(
         if register_builtins:
             register_fs(default_registry, sandbox=sandbox)
             register_calc(default_registry)
-            register_cerebro(default_registry)
         session = WebSession(
             cfg=cfg,
             ep=ep,
@@ -363,6 +361,7 @@ async def _chat_stream(session: WebSession, user_text: str):
             messages = session.messages()
             full_content = ""
             full_reasoning = ""
+            last_stats = {}
             try:
                 async for ev in agent.run(
                     messages,
@@ -376,6 +375,8 @@ async def _chat_stream(session: WebSession, user_text: str):
                         full_content += ev.text
                     elif ev.kind == "reasoning":
                         full_reasoning += ev.text
+                    elif ev.kind == "stats":
+                        last_stats = ev.data
                     yield {
                         "event": ev.kind,
                         "data": json.dumps(
@@ -389,6 +390,8 @@ async def _chat_stream(session: WebSession, user_text: str):
                     session.turns = messages[1:]
                 else:
                     session.turns = list(messages)
+                # Save stats for /api/state display
+                session.last_stats = last_stats
             except Exception as e:  # noqa: BLE001
                 yield {
                     "event": "error",
@@ -399,6 +402,7 @@ async def _chat_stream(session: WebSession, user_text: str):
             messages = session.messages()
             full_content = ""
             full_reasoning = ""
+            last_stats = {}
             try:
                 stream = await session.client.stream(
                     messages,
@@ -414,6 +418,8 @@ async def _chat_stream(session: WebSession, user_text: str):
                         full_content += ev.text
                     elif ev.kind == "reasoning":
                         full_reasoning += ev.text
+                    elif ev.kind == "usage":
+                        last_stats = ev.data
                     yield {
                         "event": ev.kind,
                         "data": json.dumps(
@@ -424,6 +430,8 @@ async def _chat_stream(session: WebSession, user_text: str):
                 if full_reasoning:
                     msg["reasoning_content"] = full_reasoning
                 session.turns.append(msg)
+                # Save stats for /api/state display
+                session.last_stats = last_stats
             except Exception as e:  # noqa: BLE001
                 yield {
                     "event": "error",
