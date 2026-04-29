@@ -25,7 +25,6 @@ Usage from CLI:    harness vast spinup moe-256k --geo EU
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -101,16 +100,10 @@ class VastManager:
         if state:
             cmd.append(state)
         try:
-            result = asyncio.get_event_loop().run_in_executor(
-                None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            )
-            raw = ""
-            try:
-                raw = result.stdout or ""
-            except Exception:
-                raw = ""
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            raw = (result.stdout or "").strip()
 
-            if not raw.strip():
+            if not raw:
                 return []
 
             # Parse JSON array from vastai output
@@ -120,7 +113,7 @@ class VastManager:
                 # Fallback: parse line-based output
                 instances = []
                 current: dict[str, Any] = {}
-                for line in raw.strip().split("\n"):
+                for line in raw.split("\n"):
                     m = re.match(r"^(\w+)\s*:\s*(.*)", line)
                     if m:
                         key, val = m.group(1).strip(), m.group(2).strip()
