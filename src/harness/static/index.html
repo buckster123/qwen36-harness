@@ -175,6 +175,60 @@
   }
   #toast.error { border-color: var(--error); color: var(--error); }
   #toast.show { display: block; }
+
+  /* Vast Manager Overlay */
+  #vast-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 100; display: flex; flex-direction: column;
+    background: rgba(0,0,0,0.6);
+    transform: translateX(100%); transition: transform 0.25s ease-in-out;
+    pointer-events: none;
+  }
+  #vast-overlay.open { transform: translateX(0); pointer-events: auto; }
+  #vast-modal {
+    flex: 1; display: grid; grid-template-columns: 340px 1fr 320px; gap: 0;
+    background: var(--bg); overflow: hidden;
+  }
+  .vm-panel {
+    background: var(--bg2); padding: 8px; overflow-y: auto;
+  }
+  .vm-panel.center { background: var(--bg); }
+  .vm-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 12px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  }
+  .vm-close {
+    background: none; border: 1px solid var(--border); color: var(--fg2);
+    font-size: 14px; cursor: pointer; padding: 2px 8px; border-radius: 4px;
+  }
+  .vm-close:hover { border-color: var(--error); color: var(--error); }
+  .vm-left { grid-area: left; border-right: 1px solid var(--border); }
+  .vm-center { grid-area: center; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .vm-right { grid-area: right; border-left: 1px solid var(--border); }
+  .vm-section { margin-bottom: 10px; }
+  .vm-section h3 { font-size: 10px; text-transform: uppercase; color: var(--fg2); margin: 0 0 6px 0; letter-spacing: 0.05em; }
+  .vm-recipe-btn {
+    width: 100%; text-align: left; background: var(--bg3); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
+    font: inherit; font-size: 11px; cursor: pointer; margin-bottom: 3px;
+  }
+  .vm-recipe-btn:hover { border-color: var(--accent2); }
+  .vm-recipe-btn.active { border-color: var(--accent); background: var(--bg4); }
+  .vm-recipe-btn small { color: var(--fg3); display: block; margin-top: 2px; font-size: 9px; }
+  .vm-inst-row {
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 8px; margin-bottom: 3px; cursor: pointer; font-size: 10px;
+  }
+  .vm-inst-row.active { border-color: var(--accent); }
+  .vm-log-viewer {
+    background: #0a0e14; border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px; font-size: 10px; color: var(--fg2); overflow-y: auto; flex: 1;
+    min-height: 80px; max-height: 100%; white-space: pre-wrap; word-break: break-all;
+    font-family: 'SF Mono', Monaco, Inconsolata, monospace;
+  }
+  .vm-log-ok { color: var(--accent); }
+  .vm-log-warn { color: var(--warn); }
+  .vm-log-err { color: var(--error); }
 </style>
 </head>
 <body>
@@ -203,6 +257,7 @@
   <span class="grow"></span>
   <button id="discover-btn" title="Probe endpoints for available models">🔍 discover</button>
   <button id="settings-btn" title="System prompt">/system</button>
+  <button id="vast-btn" class="primary">⚡ Vast Manager</button>
   <button id="clear-btn" class="danger">/clear</button>
 </header>
 
@@ -237,6 +292,78 @@
   <h2 style="margin-top: 16px;">Sandbox</h2>
   <div class="row"><span class="name" id="sandbox-path" style="font-size:10px; color:var(--fg3);">—</span></div>
 </aside>
+
+<div id="vast-overlay">
+  <div class="vm-header">
+    <span style="color: var(--accent); font-weight: 600; font-size: 12px;">⚡ Vast.ai Manager</span>
+    <div style="display:flex; gap:4px; align-items:center;">
+      <span id="vm-status" class="pill" style="background:var(--bg4); color:var(--fg3); font-size:9px;">idle</span>
+      <button class="vm-close" onclick="closeVastModal()">✕</button>
+    </div>
+  </div>
+  <div id="vast-modal">
+    <!-- LEFT -->
+    <div class="vm-panel vm-left">
+      <div class="vm-section">
+        <h3>Recipes</h3>
+        <div id="vm-recipe-list"></div>
+      </div>
+      <div class="vm-section">
+        <h3>Instances</h3>
+        <div style="display:flex; gap:4px; margin-bottom:6px;">
+          <select id="vm-geo" style="flex:1; font-size:10px;">
+            <option value="EU_NORDIC">EU Nordic</option>
+            <option value="EU">EU Wide</option>
+            <option value="US">US East</option>
+            <option value="ANY">Any Region</option>
+          </select>
+          <button onclick="vmRefresh()" style="font-size:10px; padding:2px 4px;">↻</button>
+        </div>
+        <div id="vm-inst-list"></div>
+      </div>
+      <div class="vm-section">
+        <h3>Actions</h3>
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <button onclick="vmSpinup()" class="primary" style="font-size:10px; padding:4px 6px;">⚡ Spin Up</button>
+          <button onclick="vmDestroy()" class="danger" style="font-size:10px; padding:4px 6px;">💀 Destroy</button>
+          <button onclick="vmTunnel('up')" style="font-size:10px; padding:4px 6px;">🔗 Tunnel Up</button>
+          <button onclick="vmTunnel('down')" style="font-size:10px; padding:4px 6px;">🔌 Tunnel Down</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER -->
+    <div class="vm-panel vm-center">
+      <div style="display:flex; gap:8px; align-items:center;">
+        <span id="vm-selected-recipe" style="font-weight:600; font-size:12px;">No recipe selected</span>
+      </div>
+      <div id="vm-inst-detail"></div>
+      <div class="vm-log-viewer" id="vm-spinner-console">
+        <span style="color:var(--fg3);">Select a recipe and click Spin Up to begin...</span>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="vm-panel vm-right">
+      <div class="vm-section">
+        <h3>Tunnel</h3>
+        <div id="vm-tunnel-status" style="font-size:10px; color:var(--fg3); margin-bottom:4px;">not connected</div>
+      </div>
+      <div class="vm-section" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+        <h3>Logs</h3>
+        <div class="vm-log-viewer" id="vm-tunnel-console" style="min-height:120px;"></div>
+      </div>
+      <div class="vm-section">
+        <h3>Endpoint</h3>
+        <div id="vm-endpoint-info" style="font-size:10px; color:var(--fg3); line-height:1.4;">
+          No active endpoint from Vast<br><br>
+          When tunnel is up, your harness<br>endpoint will be:<br>
+          <span style="color:var(--accent2); font-weight:600;">http://127.0.0.1:8800/v1</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div id="toast"></div>
 
@@ -775,6 +902,199 @@ $('discover-btn').onclick = async () => {
 };
 
 refreshState().catch(e => toast('init failed: ' + e.message, true));
+
+// --- Vast Manager Overlay ---------------------------------------------------
+let vmSelectedRecipe = null;
+let vmSelectedInstId = null;
+
+$('vast-btn').onclick = () => {
+  $('vast-overlay').classList.add('open');
+  vmLoadRecipes();
+  vmRefresh();
+};
+
+function closeVastModal() {
+  $('vast-overlay').classList.remove('open');
+}
+
+// Also close on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('vast-overlay').classList.contains('open')) {
+    closeVastModal();
+  }
+});
+
+function vmLog(msg, cls) {
+  const el = document.getElementById('vm-spinner-console');
+  const span = document.createElement('span');
+  span.className = cls || '';
+  span.textContent = msg + '\n';
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function vmLoadRecipes() {
+  try {
+    const r = await api('/api/vast/recipes');
+    if (!r.ok) return;
+    const list = $('vm-recipe-list');
+    list.innerHTML = '';
+    for (const rc of r.recipes) {
+      const btn = document.createElement('button');
+      btn.className = 'vm-recipe-btn';
+      btn.innerHTML = rc.display + '<small>' + rc.name + '</small>';
+      btn.onclick = () => {
+        vmSelectedRecipe = rc.name;
+        $('vm-selected-recipe').textContent = rc.display;
+        document.querySelectorAll('.vm-recipe-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        vmLog('✓ Selected: ' + rc.display, 'vm-log-ok');
+      };
+      list.appendChild(btn);
+    }
+  } catch (e) { vmLog('Failed to load recipes: ' + e.message, 'vm-log-err'); }
+}
+
+async function vmRefresh() {
+  // Refresh instances
+  try {
+    const geo = $('vm-geo').value;
+    const r = await api('/api/vast/instances?' + (geo ? `state=running` : ''));
+    const list = $('vm-inst-list');
+    list.innerHTML = '';
+    if (!r.ok || !r.instances.length) {
+      list.innerHTML = '<div style="font-size:10px;color:var(--fg3);">No active instances</div>';
+    } else {
+      for (const inst of r.instances) {
+        const row = document.createElement('div');
+        row.className = 'vm-inst-row' + (inst.id === vmSelectedInstId ? ' active' : '');
+        row.innerHTML = '<span class="pill" style="background:' + statusColor(inst.status) + '; color:#000; font-size:8px;">' + (inst.status || '?') + '</span> ' + inst.id + ' · $' + (inst.price_hr || '?') + '/hr';
+        row.onclick = async () => {
+          vmSelectedInstId = inst.id;
+          document.querySelectorAll('.vm-inst-row').forEach(r => r.classList.remove('active'));
+          row.classList.add('active');
+          await vmPollStatus(inst.id);
+        };
+        list.appendChild(row);
+      }
+    }
+  } catch (e) { /* silent */ }
+
+  // Refresh tunnel status
+  try {
+    const t = await api('/api/vast/tunnel/status', {method: 'POST'});
+    $('vm-tunnel-status').textContent = t.running ? 'connected (pid ' + t.pid + ')' : 'not connected';
+    $('vm-tunnel-status').style.color = t.running ? 'var(--accent)' : 'var(--fg3)';
+  } catch (e) { /* silent */ }
+
+  // Refresh latest instance detail
+  try {
+    const lr = await api('/api/vast/latest');
+    if (lr.instance) {
+      vmSelectedInstId = lr.instance.id;
+      $('vm-status').textContent = 'has last_instance';
+      $('vm-status').style.color = 'var(--warn)';
+      await vmPollStatus(lr.instance.id);
+    } else {
+      $('vm-status').textContent = 'idle';
+      $('vm-status').style.color = 'var(--fg3)';
+    }
+  } catch (e) { /* silent */ }
+}
+
+async function vmPollStatus(instId) {
+  try {
+    const r = await api('/api/vast/status?instance_id=' + instId);
+    if (!r.ok || !r.status) return;
+    const s = r.status;
+    $('vm-status').textContent = s.status || '?';
+    $('vm-inst-detail').innerHTML =
+      '<div class="row"><span class="name">GPU</span><span>' + (s.gpu || '?') + '</span></div>' +
+      '<div class="row"><span class="name">VRAM</span><span>' + (s.vram_gb || '?') + ' GB</span></div>' +
+      '<div class="row"><span class="name">Health</span><span>' + (s.health || '?') + '</span></div>' +
+      '<div class="row"><span class="name">Model</span><span>' + (s.model_loaded || '? ') + '</span></div>';
+    if (s.health === 'ok') {
+      $('vm-endpoint-info').innerHTML = '✓ Model: <strong>' + s.model_loaded + '</strong><br><br>Endpoint: <span style="color:var(--accent2); font-weight:600;">http://127.0.0.1:8800/v1</span>';
+    } else {
+      $('vm-endpoint-info').innerHTML = 'Health: ' + (s.health || '?') + '<br><br>When healthy:<br><span style="color:var(--accent2); font-weight:600;">http://127.0.0.1:8800/v1</span>';
+    }
+  } catch (e) { /* silent */ }
+}
+
+async function vmSpinup() {
+  if (!vmSelectedRecipe) { toast('Select a recipe first', true); return; }
+  const btn = document.querySelector('[onclick="vmSpinup()"]');
+  btn.textContent = '⏳...'; btn.disabled = true;
+  try {
+    const geo = $('vm-geo').value;
+    vmLog('', '');
+    vmLog('==> Spinning up ' + vmSelectedRecipe + ' (geo=' + geo + ')...', 'vm-log-warn');
+    const r = await api('/api/vast/spinup', {method: 'POST', body: {recipe: vmSelectedRecipe, geo}});
+    if (r.success) {
+      vmLog('✓ Instance created: ' + (r.instance_id || 'unknown'), 'vm-log-ok');
+      toast('Instance created!');
+      await vmRefresh();
+      setTimeout(() => vmLog('Tip: click "Tunnel Up" to connect...', 'vm-log-warn'), 2000);
+    } else {
+      vmLog('✗ Failed: ' + (r.error || r.output || JSON.stringify(r)), 'vm-log-err');
+      toast('Spin up failed', true);
+    }
+  } catch (e) { vmLog('✗ Error: ' + e.message, 'vm-log-err'); toast(e.message, true); }
+  btn.textContent = '⚡ Spin Up'; btn.disabled = false;
+}
+
+async function vmDestroy() {
+  const instId = vmSelectedInstId;
+  if (!instId) { toast('No instance selected', true); return; }
+  if (!confirm('Destroy instance ' + instId + '?')) return;
+  try {
+    vmLog('==> Destroying ' + instId + '...', 'vm-log-err');
+    const r = await api('/api/vast/down', {method: 'POST', body: {instance_id: instId}});
+    if (r.success) {
+      vmLog('✓ Instance destroyed.', 'vm-log-warn');
+      toast('Destroyed');
+      vmSelectedInstId = null;
+      $('vm-inst-detail').innerHTML = '';
+      await vmRefresh();
+    } else {
+      vmLog('✗ Down failed: ' + (r.error || r.output), 'vm-log-err');
+      toast('Destroy failed', true);
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+async function vmTunnel(action) {
+  try {
+    const btns = document.querySelectorAll('[onclick^="vmTunnel"]');
+    btns.forEach(b => { b.disabled = true; });
+    vmLog('==> Tunnel ' + action + '...', 'vm-log-warn');
+    const r = await api('/api/vast/tunnel/' + action, {method: 'POST'});
+    if (action === 'status') {
+      vmLog(r.running ? '✓ Tunnel connected (pid ' + r.pid + ')' : '✗ Not connected', r.running ? 'vm-log-ok' : 'vm-log-err');
+    } else if (r.success) {
+      vmLog('✓ Tunnel ' + action, 'vm-log-ok');
+      toast('Tunnel up!');
+      await vmRefresh();
+    } else {
+      vmLog('✗ Tunnel ' + action + ': ' + (r.output || JSON.stringify(r)), 'vm-log-err');
+      toast('Tunnel failed', true);
+    }
+  } catch (e) { vmLog('✗ Error: ' + e.message, 'vm-log-err'); }
+}
+
+function statusColor(s) {
+  if (!s) return 'var(--fg3)';
+  const m = {running: 'var(--accent)', loading: 'var(--warn)', queued: 'var(--warn)', stopping: 'var(--warn)', stopped: 'var(--fg3)'};
+  return m[s] || 'var(--fg3)';
+}
+
+// Auto-refresh Vast state every 15s while overlay is open
+setInterval(() => {
+  if ($('vast-overlay').classList.contains('open')) {
+    vmRefresh();
+  }
+}, 15000);
+
 </script>
 </body>
 </html>

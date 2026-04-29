@@ -711,6 +711,16 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--no-browser", action="store_true", help="don't open browser on start")
     serve.add_argument("--reload", action="store_true", help="dev: auto-reload on code changes")
 
+    vast_p = sub.add_parser("vast", help="Vast.ai GPU instance manager (spinner, tunnel, destroy)")
+    vast_p.add_argument("--recipe", "-r", help="override recipe name")
+    vast_p.add_argument("--geo", "-g", default="EU_NORDIC", help="geo region")
+    vast_p.add_argument("--instance", "-i", help="operate on specific instance ID")
+    vast_p.add_argument("--destroy", action="store_true", help="destroy the given/last instance")
+    vast_p.add_argument("--list", "-l", action="store_true", help="list running instances")
+    vast_p.add_argument("--status", "-s", action="store_true", help="poll status of instance")
+    vast_p.add_argument("--tunnel", "-t", choices=["up", "down", "status"], help="control SSH tunnel")
+    vast_p.add_argument("--spinup", action="store_true", help="just spin up (non-interactive)")
+
     args = p.parse_args(argv)
     if args.command == "chat":
         try:
@@ -719,6 +729,8 @@ def main(argv: list[str] | None = None) -> int:
             return 130
     elif args.command == "serve":
         return _run_serve(args)
+    elif args.command == "vast":
+        return _run_vast(args)
     return 2
 
 
@@ -748,6 +760,228 @@ def _run_serve(args: Any) -> int:
         uvicorn.run("harness.web:create_app", host=args.host, port=args.port,
                     log_level="info", reload=True, factory=True)
     return 0
+
+
+def _run_vast(args: Any) -> int:
+    """Vast.ai instance manager — interactive or single-command mode."""
+    from .tools.vast_manager import VastManager
+
+    vm = VastManager()
+
+    # --- non-interactive one-offs -------------------------------------------
+
+    if args.list:
+        instances = vm.list_instances(state="running")
+        if not instances:
+            console.print(f"[{C_SYS}]no active instances[/]")
+            return 0
+        console.print(f"{'ID':<12} {'Status':<10} {'GPU':<20} {'$hr':>8}  {'Geo'}")
+        console.print(Rule(style="dim"))
+        for i in instances:
+            console.print(
+                f"[{C_ENDPOINT}]{i['id']:<12}[/] {i.get('status','?'):<10} "
+                f"{str(i.get('gpu','?'))[:20]:<20} ${i.get('price_hr','?'):>7}  {i.get('geo','?')}")
+        return 0
+
+    if args.status:
+        inst = args.instance or (vm.latest_instance() or {}).get("id")
+        if not inst:
+            console.print(f"[{C_ERR}]no instance to check — use -i <id>[/]")
+            return 1
+        s = vm.poll_status(inst)
+        console.print(f"Instance {inst}:")
+        for k, v in sorted(s.items()):
+            if isinstance(v, dict):
+                console.print(f"  {k}:")
+                for kk2, vv2 in v.items():
+                    console.print(f"    {kk2} = {vv2}")
+            else:
+                console.print(f"  {k} = {v}")
+        return 0
+
+    if args.destroy:
+        inst = args.instance or (vm.latest_instance() or {}).get("id")
+        if not inst:
+            console.print(f"[{C_ERR}]no instance to destroy[/]")
+            return 1
+        console.print(f"[bold red]Destroying {inst}...[/]")
+        r = vm.down(instance_id=inst)
+        if r["success"]:
+            console.print(f"[green]✓ Destroyed[/]")
+        else:
+            console.print(f"[red]✗ Failed: {r.get('error', r)}[/]")
+        return 0
+
+    if args.tunnel:
+        console.print(f"[bold]Tunnel {args.tunnel}...[/]")
+        r = vm.tunnel(args.tunnel)
+        if args.tunnel == "status":
+            if r.get("running"):
+                console.print(f"[green]connected (pid {r['pid']})[/]")
+            else:
+                console.print(f"[red]not connected[/]")
+        elif r["success"]:
+            console.print(f"[green]✓ done[/]")
+        else:
+            console.print(f"[red]✗ {r.get('output', r)}[/]")
+        return 0
+
+    if args.spinup and args.recipe:
+        recipe_name = args.recipe
+    elif args.recipe:
+        recipe_name = args.recipe
+    else:
+        # Interactive full menu mode
+        console.print()
+        console.print(Panel("qwen36-harness Vast Manager", border_style=C_OK))
+        console.print(Rule(style="dim"))
+
+        recipes = vm.recipes()
+        console.print("[bold]Available recipes:[/]\n")
+        for idx, r in enumerate(recipes, 1):
+            console.print(f"  [{C_OK}]{idx:<2}[/] {r['display']}")
+            console.print(f"       [dim]name: {r['name']}[/]")
+
+        try:
+            pick = Prompt.ask("[bold]Select recipe", choices=[str(i) for i in range(1, len(recipes) + 1)])
+            selected = recipes[int(pick) - 1]
+        except (EOFError, KeyboardInterrupt):
+            console.print(f"\n[{C_SYS}]bye[/]")
+            return 0
+
+        geo = Prompt.ask("[bold]Geo region", choices=["EU_NORDIC", "EU", "US", "ANY"], default="EU_NORDIC")
+        console.print()
+
+        recipe_name = selected["name"]
+        console.print(f"[bold yellow]==> Spinning up {recipe_name} ({geo})...[/]")
+        r = vm.spinup(recipe_name, geo=geo)
+        if r["success"]:
+            inst_id = r.get("instance_id", "?")
+            console.print(f"[green]✓ Instance created: {inst_id}[/]")
+            do_tunnel = Prompt.ask("[bold]Open SSH tunnel? (y/n)", default="y").lower() == "y"
+            if do_tunnel:
+                tr = vm.tunnel("up")
+                if tr.get("running"):
+                    console.print(f"[green]✓ Tunnel connected (pid {tr['pid']})[/]")
+                else:
+                    console.print(f"[red]✗ Tunnel failed: {tr.get('output', tr)}[/]")
+        else:
+            console.print(f"[red]✗ Spin up failed:[/]")
+            for l in (r.get("output", r.get("error", "")) or "").split("\n")[-20:]:
+                console.print(f"  {l}")
+            return 1
+
+        console.print()
+        console.print("[bold]Polling instance status...[/]")
+        inst_id = r.get("instance_id", (vm.latest_instance() or {}).get("id"))
+        if inst_id:
+            max_polls = 20
+            for i in range(max_polls):
+                time.sleep(15)
+                s = vm.poll_status(inst_id)
+                st = s.get("status", "?")
+                health = s.get("health", "?")
+                console.print(f"  [{C_SYS}]poll {i+1}/{max_polls}[/] status={st} health={health}")
+                if st == "running" and health != "unreachable":
+                    console.print()
+                    console.print(Panel(
+                        f"[{C_OK}]Instance ready![/]\n  GPU: {s.get('gpu', '?')}\n  Model: {s.get('model_loaded', '?')}",
+                        title="✓", border_style=C_OK))
+                    break
+            else:
+                console.print(f"[dim]Timed out after {max_polls} polls.[/]")
+        return 0
+
+    # Interactive loop mode (no flags)
+    running = True
+    last_inst = None
+    while running:
+        console.print()
+        console.print(Panel("Vast Manager", border_style=C_OK))
+        console.print(Rule(style="dim"))
+        choices_display = [
+            ("1", "Spin up new instance"),
+            ("2", "List running instances"),
+            ("3", "Poll status"),
+            ("4", "Tunnel: up/down/status"),
+            ("5", "Destroy instance"),
+            ("q", "Quit"),
+        ]
+        for ch, label in choices_display:
+            console.print(f"  [{C_OK}]{ch}[/] {label}")
+
+        try:
+            pick = Prompt.ask("[bold]Choice", default="1")
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if pick == "q":
+            running = False
+            continue
+        elif pick == "1":
+            recipes = vm.recipes()
+            console.print("\n[bold]Recipes:[/]")
+            for idx, r in enumerate(recipes, 1):
+                console.print(f"  {idx}. {r['display']}")
+            try:
+                n = int(Prompt.ask("Select recipe", default="1")) - 1
+                selected = recipes[n]
+            except (ValueError, IndexError, EOFError):
+                continue
+            geo = Prompt.ask("Geo region", default="EU_NORDIC")
+            r = vm.spinup(selected["name"], geo=geo)
+            if r["success"]:
+                last_inst = r.get("instance_id")
+                console.print(f"[green]✓ Created: {last_inst}[/]")
+            else:
+                console.print(f"[red]✗ Failed:[/] {r}")
+        elif pick == "2":
+            instances = vm.list_instances(state="running")
+            if not instances:
+                console.print(f"[{C_SYS}]no active instances[/]")
+            else:
+                for i in instances:
+                    console.print(
+                        f"[{C_ENDPOINT}]{i['id']:<12}[/] {str(i.get('status','?'))[:10]:<10} "
+                        f"{str(i.get('gpu','?'))[:20]:<20} ${i.get('price_hr','?'):>7}")
+        elif pick == "3":
+            inst = Prompt.ask("Instance ID", default=last_inst or "")
+            if not inst:
+                continue
+            s = vm.poll_status(inst)
+            console.print(f"\n{'='*60}")
+            for k, v in sorted(s.items()):
+                if isinstance(v, dict):
+                    for kk2, vv2 in v.items():
+                        console.print(f"  {k}.{kk2} = {vv2}")
+                else:
+                    console.print(f"  {k} = {v}")
+            console.print('='*60)
+        elif pick == "4":
+            t_action = Prompt.ask("Tunnel action", choices=["up", "down", "status"], default="status")
+            r = vm.tunnel(t_action)
+            if t_action == "status":
+                color = 'green' if r.get('running') else 'red'
+                status = f"connected (pid {r['pid']})" if r.get('running') else 'not connected'
+                console.print(f"[{color}]{status}[/]")
+            elif r["success"]:
+                console.print(f"[green]✓ done[/]")
+        elif pick == "5":
+            inst = Prompt.ask("Instance ID to destroy", default=last_inst or "")
+            if not inst:
+                continue
+            if Prompt.ask("Destroy?", choices=["y", "n"], default="n").lower() != "y":
+                console.print("[dim]cancelled[/]")
+                continue
+            r = vm.down(instance_id=inst)
+            if r["success"]:
+                console.print(f"[green]✓ Destroyed[/]")
+                last_inst = None
+        return 0
+
+    console.print(f"\n[{C_SYS}]bye![/]")
+    return 0
+
 
 
 if __name__ == "__main__":

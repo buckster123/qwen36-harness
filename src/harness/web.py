@@ -56,6 +56,7 @@ from .tools.filesystem import FsSandbox, register as register_fs
 from .tools.subagent import register as register_subagent
 from .tools.code_exec import init_sandbox, register as register_code_exec
 from .tools.web_search import register as register_web_search
+from .tools.vast_manager import VastManager
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class WebSession:
     turns: list[dict[str, Any]] = field(default_factory=list)
     last_stats: dict[str, Any] = field(default_factory=dict)
     discovered_models: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    vast_manager: VastManager | None = None  # set in create_app factory
 
     def __post_init__(self) -> None:
         self.client = HarnessClient(self.ep)
@@ -249,6 +251,7 @@ def create_app(
             mcp_configs=load_mcp_config(),
             max_tokens=ep.default_max_tokens,
             temperature=ep.default_temperature,
+            vast_manager=VastManager(),
         )
 
     app = FastAPI(title="qwen36-harness web", version="0.3.0")
@@ -383,6 +386,83 @@ def create_app(
         # Also refresh MCP configs so the full state is up to date
         session.mcp_configs = load_mcp_config()
         return {"ok": True, "models": models}
+    # --- Vast.ai instance management ----------------------------------------
+
+    @app.get("/api/vast/recipes")
+    async def vast_recipes() -> dict[str, Any]:
+        """List all available GPU/model recipes."""
+        vm = session.vast_manager
+        if vm is None:
+            return {"ok": False, "error": "VastManager not configured"}
+        return {"ok": True, "recipes": await asyncio.to_thread(vm.recipes)}
+
+    @app.post("/api/vast/spinup")
+    async def vast_spinup(req: dict[str, str] | None = None) -> dict[str, Any]:
+        """Spin up a new Vast.ai instance. Body: {recipe, geo, ...overrides}."""
+        vm = session.vast_manager
+        if vm is None:
+            return {"success": False, "error": "VastManager not configured"}
+        body = req or {}
+        recipe = body.get("recipe")
+        if not recipe:
+            raise HTTPException(400, "missing 'recipe' field")
+        geo = body.get("geo", "EU_NORDIC")
+        overrides = {k: v for k, v in body.items() if k not in ("recipe", "geo")}
+        result = await asyncio.to_thread(vm.spinup, recipe, geo=geo, **overrides)
+        return result
+
+    @app.get("/api/vast/instances")
+    async def vast_instances(state: str | None = None) -> dict[str, Any]:
+        """List active Vast.ai instances."""
+        vm = session.vast_manager
+        if vm is None:
+            return {"ok": False, "error": "VastManager not configured"}
+        instances = await asyncio.to_thread(vm.list_instances, state=state)
+        return {"ok": True, "instances": instances}
+
+    @app.get("/api/vast/latest")
+    async def vast_latest() -> dict[str, Any]:
+        """Get the last spun-up instance."""
+        vm = session.vast_manager
+        if vm is None:
+            return {"ok": False, "error": "VastManager not configured"}
+        inst = await asyncio.to_thread(vm.latest_instance)
+        return {"ok": True, "instance": inst}
+
+    @app.get("/api/vast/status")
+    async def vast_status(instance_id: str | None = None) -> dict[str, Any]:
+        """Poll status of a specific instance (or .last_instance)."""
+        vm = session.vast_manager
+        if vm is None:
+            return {"ok": False, "error": "VastManager not configured"}
+        target = instance_id or ((await asyncio.to_thread(vm.latest_instance)) or {}).get("id")
+        if not target:
+            return {"ok": True, "status": "no active instance"}
+        result = await asyncio.to_thread(vm.poll_status, target)
+        return {"ok": True, "status": result}
+
+    @app.post("/api/vast/down")
+    async def vast_down(req: dict[str, str] | None = None) -> dict[str, Any]:
+        """Destroy a Vast.ai instance. Body: {instance_id} (optional)."""
+        vm = session.vast_manager
+        if vm is None:
+            return {"success": False, "error": "VastManager not configured"}
+        body = req or {}
+        inst_id = body.get("instance_id")
+        result = await asyncio.to_thread(vm.down, instance_id=inst_id)
+        return result
+
+    @app.post("/api/vast/tunnel/{action}")
+    async def vast_tunnel(action: str) -> dict[str, Any]:
+        """Control SSH tunnel: up | status | down | logs."""
+        if action not in ("up", "status", "down", "logs"):
+            raise HTTPException(400, f"invalid action: {action}")
+        vm = session.vast_manager
+        if vm is None:
+            return {"success": False, "error": "VastManager not configured"}
+        result = await asyncio.to_thread(vm.tunnel, action)
+        return result
+
 
     # --- lifecycle ----------------------------------------------------------
 
