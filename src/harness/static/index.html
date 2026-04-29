@@ -908,6 +908,7 @@ let vmSelectedRecipe = null;
 let vmSelectedInstId = null;
 
 $('vast-btn').onclick = () => {
+  console.log('[vast] Opening Vast Manager overlay');
   $('vast-overlay').classList.add('open');
   vmLoadRecipes();
   vmRefresh();
@@ -936,9 +937,18 @@ function vmLog(msg, cls) {
 async function vmLoadRecipes() {
   try {
     const r = await api('/api/vast/recipes');
-    if (!r.ok) return;
+    console.log('[vast] recipes API response:', JSON.stringify(r));
+    if (!r.ok) {
+      vmLog('✗ Recipes API error: ' + (r.error || JSON.stringify(r)), 'vm-log-err');
+      return;
+    }
     const list = $('vm-recipe-list');
     list.innerHTML = '';
+    if (!r.recipes || !r.recipes.length) {
+      vmLog('⚠ Recipes API returned empty list', 'vm-log-warn');
+      list.innerHTML = '<div style="font-size:10px;color:var(--warn);">No recipes available</div>';
+      return;
+    }
     for (const rc of r.recipes) {
       const btn = document.createElement('button');
       btn.className = 'vm-recipe-btn';
@@ -952,7 +962,11 @@ async function vmLoadRecipes() {
       };
       list.appendChild(btn);
     }
-  } catch (e) { vmLog('Failed to load recipes: ' + e.message, 'vm-log-err'); }
+  } catch (e) {
+    console.error('[vast] vmLoadRecipes error:', e);
+    const list = $('vm-recipe-list');
+    list.innerHTML = '<div style="font-size:10px;color:var(--error);">Failed to load recipes: ' + e.message + '</div>';
+  }
 }
 
 async function vmRefresh() {
@@ -960,9 +974,10 @@ async function vmRefresh() {
   try {
     const geo = $('vm-geo').value;
     const r = await api('/api/vast/instances?' + (geo ? `state=running` : ''));
+    console.log('[vast] instances API response:', JSON.stringify(r));
     const list = $('vm-inst-list');
     list.innerHTML = '';
-    if (!r.ok || !r.instances.length) {
+    if (!r.ok || !r.instances || !r.instances.length) {
       list.innerHTML = '<div style="font-size:10px;color:var(--fg3);">No active instances</div>';
     } else {
       for (const inst of r.instances) {
@@ -978,14 +993,21 @@ async function vmRefresh() {
         list.appendChild(row);
       }
     }
-  } catch (e) { /* silent */ }
+  } catch (e) {
+    console.error('[vast] instances refresh error:', e);
+    const list = $('vm-inst-list');
+    list.innerHTML = '<div style="font-size:10px;color:var(--error);">Error loading instances</div>';
+  }
 
   // Refresh tunnel status
   try {
     const t = await api('/api/vast/tunnel/status', {method: 'POST'});
     $('vm-tunnel-status').textContent = t.running ? 'connected (pid ' + t.pid + ')' : 'not connected';
     $('vm-tunnel-status').style.color = t.running ? 'var(--accent)' : 'var(--fg3)';
-  } catch (e) { /* silent */ }
+  } catch (e) {
+    console.warn('[vast] tunnel status error:', e);
+    // Don't show error for tunnel — static "not connected" is fine
+  }
 
   // Refresh latest instance detail
   try {
@@ -999,7 +1021,11 @@ async function vmRefresh() {
       $('vm-status').textContent = 'idle';
       $('vm-status').style.color = 'var(--fg3)';
     }
-  } catch (e) { /* silent */ }
+  } catch (e) {
+    console.warn('[vast] latest instance error:', e);
+    $('vm-status').textContent = 'idle';
+    $('vm-status').style.color = 'var(--fg3)';
+  }
 }
 
 async function vmPollStatus(instId) {
