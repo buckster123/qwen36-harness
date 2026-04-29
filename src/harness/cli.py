@@ -35,7 +35,7 @@ from .tools.cron import register as register_cron
 # See configs/mcp_servers.toml [servers.cerebro].
 # from .tools.cerebro import register as register_cerebro
 from .tools.filesystem import FsSandbox, register as register_fs
-from .tools.subagent import init_manager, get_manager
+from .tools.subagent import init_manager, get_manager, register as register_subagent
 from .mcp import MCPManager, load_mcp_config
 
 # --- styling ------------------------------------------------------------------
@@ -97,6 +97,7 @@ HELP = """
   /save [path]         save transcript as JSON
   /info                current state, last response stats
   /retry               regenerate the last assistant turn
+  /agents              list active sub-agents and their status
 """
 
 
@@ -620,6 +621,7 @@ async def chat_loop(args: argparse.Namespace) -> int:
     sandbox = register_fs(default_registry, sandbox=FsSandbox(args.sandbox or None))
     register_calc(default_registry)
     register_cron(default_registry)
+    register_subagent(default_registry)
     # Cerebro tools via MCP instead of manual wrapper. Start with /mcp start cerebro
     # sandbox = register_cerebro(default_registry)  # disabled — see comment above
 
