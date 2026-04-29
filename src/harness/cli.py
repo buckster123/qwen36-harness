@@ -35,6 +35,7 @@ from .tools.cron import register as register_cron
 # See configs/mcp_servers.toml [servers.cerebro].
 # from .tools.cerebro import register as register_cerebro
 from .tools.filesystem import FsSandbox, register as register_fs
+from .tools.subagent import init_manager, get_manager
 from .mcp import MCPManager, load_mcp_config
 
 # --- styling ------------------------------------------------------------------
@@ -364,6 +365,8 @@ class State:
         self.agent_mode = False  # toggle with /agent on
         self.mcp = MCPManager(default_registry)
         self.mcp_configs: dict[str, Any] = {}  # populated in chat_loop()
+        # Initialize sub-agent manager
+        self.subagents = init_manager(self.client, default_registry)
 
     async def switch_endpoint(self, name: str) -> None:
         try:
@@ -524,6 +527,29 @@ async def handle_slash(state: State, line: str) -> bool:
                 console.print(f"[{C_ERR}]stop failed: {e}[/]")
         else:
             console.print(f"[{C_ERR}]usage: /mcp  OR  /mcp start|stop <name>[/]")
+
+    elif cmd == "/agents":
+        # List active sub-agents
+        agents = state.subagents.list_agents()
+        if not agents:
+            console.print(f"[{C_SYS}]no sub-agents spawned yet (use /agent on + agent.spawn)[/]")
+        else:
+            for a in agents:
+                status_color = {
+                    "running": C_OK,
+                    "done": C_OK,
+                    "cancelled": C_ERR,
+                    "timeout": C_ERR,
+                    "error": C_ERR,
+                }.get(a["status"], C_SYS)
+                console.print(
+                    f" [{status_color}]{a['agent_id']:<16}[/]"
+                    f" role=[{C_TOOL}]{a['role']:<14}[/]"
+                    f" status=[{status_color}]{a['status']}[/]"
+                    f"  [{C_SYS}]{a['created_at'][:19]}[/]"
+                )
+                if a.get("result_preview"):
+                    console.print(f"    result: {a['result_preview'][:80]}")
 
     elif cmd == "/sandbox":
         console.print(f"[{C_OK}]fs sandbox root: {state.sandbox.root}[/]")

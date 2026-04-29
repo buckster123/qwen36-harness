@@ -200,7 +200,7 @@ def _coerce_to_string(value: Any) -> str:
 default_registry = Registry()
 
 # Import tool modules — they register against default_registry at import time
-from . import calc, cron, filesystem  # noqa: E402
+from . import calc, cron, filesystem, subagent  # noqa: E402
 
 __all__ = [
     "Registry",
@@ -211,4 +211,5 @@ __all__ = [
     "calc",
     "cron",
     "filesystem",
+    "subagent",
 ]

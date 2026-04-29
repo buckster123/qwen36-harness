@@ -35,5 +35,43 @@ Add new tool sections below as they are integrated. Each section should cover:
 3. Any constraints or gotchas
 4. Key examples if non-obvious
 
+### agent.* (Sub-Agent Orchestration — NEW)
+Spawn helper agents that run in parallel slots on our multi-slot llama.cpp server. Each sub-agent gets its own isolated conversation with configurable tool access. Main agent continues working while sub-agents process tasks.
+
+- **agent.spawn(role, prompt, tools?, timeout_s?, max_tokens?, temperature?)** → Spawn a sub-agent
+  - role: Label (e.g., 'researcher', 'coder', 'reviewer')
+  - prompt: The task/instructions
+  - tools: Optional list of tool names to restrict access to (None = all)
+  - timeout_s: Max runtime in seconds (default 300)
+  - max_tokens: Max tokens for response (default 1024)
+  - Returns: agent_id for tracking
+
+- **agent.list()** → List all active/recent sub-agents with status
+
+- **agent.result(agent_id)** → Poll for result. Call repeatedly until status is 'done'.
+
+- **agent.cancel(agent_id)** → Terminate a running sub-agent and free its slot.
+
+- **agent.send(agent_id, message)** → Send follow-up (limited support - use spawn with updated prompts).
+
+Constraints:
+- Max 3 concurrent sub-agents (reserve 1 slot for main agent)
+- Sub-agents cannot spawn their own sub-agents
+- Multi-turn messaging is limited - prefer spawning new agents with updated prompts
+- Auto-confirm tool calls for sub-agents (no interactive confirmation)
+
+Usage pattern:
+```
+# Parallel research
+spawn "researcher_1" → "Find docs for X library"
+spawn "researcher_2" → "Find alternatives to Y framework"
+... work on main task ...
+result("researcher_1") + result("researcher_2") → combine findings
+
+# Background maintenance
+spawn "janitor" → "Run dream cycle and clean up memory graph"
+... continue chatting with user ...
+```
+
 ### [ADD SECTION]
 <!-- New tool groups register here. Follow the format above. -->
