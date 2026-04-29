@@ -186,11 +186,12 @@
   }
   #vast-overlay.open { transform: translateX(0); pointer-events: auto; }
   #vast-modal {
-    flex: 1; display: grid; grid-template-columns: 340px 1fr 320px; gap: 0;
-    background: var(--bg); overflow: hidden;
+    flex: 1; display: flex; flex-direction: row;
+    background: var(--bg); overflow: hidden; height: 0;
   }
   .vm-panel {
     background: var(--bg2); padding: 8px; overflow-y: auto;
+    display: flex; flex-direction: column; margin: 0;
   }
   .vm-panel.center { background: var(--bg); }
   .vm-header {
@@ -202,9 +203,9 @@
     font-size: 14px; cursor: pointer; padding: 2px 8px; border-radius: 4px;
   }
   .vm-close:hover { border-color: var(--error); color: var(--error); }
-  .vm-left { grid-area: left; border-right: 1px solid var(--border); }
-  .vm-center { grid-area: center; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-  .vm-right { grid-area: right; border-left: 1px solid var(--border); }
+  .vm-left { border-right: 1px solid var(--border); width: 340px; min-width: 250px; flex-shrink: 0; }
+  .vm-center { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); }
+  .vm-right { border-left: 1px solid var(--border); width: 320px; min-width: 250px; flex-shrink: 0; }
   .vm-section { margin-bottom: 10px; }
   .vm-section h3 { font-size: 10px; text-transform: uppercase; color: var(--fg2); margin: 0 0 6px 0; letter-spacing: 0.05em; }
   .vm-recipe-btn {
@@ -943,16 +944,22 @@ async function vmLoadRecipes() {
       return;
     }
     const list = $('vm-recipe-list');
-    list.innerHTML = '';
-    if (!r.recipes || !r.recipes.length) {
-      vmLog('⚠ Recipes API returned empty list', 'vm-log-warn');
-      list.innerHTML = '<div style="font-size:10px;color:var(--warn);">No recipes available</div>';
+    console.log('[vast] vm-recipe-list element:', list);
+    if (!list) {
+      vmLog('✗ DOM ERROR: vm-recipe-list not found', 'vm-log-err');
       return;
     }
+    // Debug: inject a visible marker first
+    list.innerHTML = '<div style="color:var(--warn);font-size:10px;">[DEBUG] recipes API returned: ' + r.recipes.length + ' items</div>';
+    console.log('[vast] recipes count:', r.recipes.length, 'recipes:', JSON.stringify(r.recipes));
     for (const rc of r.recipes) {
       const btn = document.createElement('button');
       btn.className = 'vm-recipe-btn';
       btn.innerHTML = rc.display + '<small>' + rc.name + '</small>';
+      console.log('[vast] created button:', rc.name, 'btn element:', btn);
+      // Debug: ensure button is visible
+      btn.style.opacity = '1';
+      btn.style.display = 'block';
       btn.onclick = () => {
         vmSelectedRecipe = rc.name;
         $('vm-selected-recipe').textContent = rc.display;
@@ -961,11 +968,13 @@ async function vmLoadRecipes() {
         vmLog('✓ Selected: ' + rc.display, 'vm-log-ok');
       };
       list.appendChild(btn);
+      console.log('[vast] appended button to list');
     }
+    console.log('[vast] Total buttons in DOM after render:', list.querySelectorAll('.vm-recipe-btn').length);
   } catch (e) {
     console.error('[vast] vmLoadRecipes error:', e);
     const list = $('vm-recipe-list');
-    list.innerHTML = '<div style="font-size:10px;color:var(--error);">Failed to load recipes: ' + e.message + '</div>';
+    if (list) list.innerHTML = '<div style="font-size:10px;color:var(--error);">Failed to load recipes: ' + e.message + '</div>';
   }
 }
 
