@@ -54,6 +54,8 @@ from .tools.cron import register as register_cron
 from .tools.cron import scheduler as cron_scheduler
 from .tools.filesystem import FsSandbox, register as register_fs
 from .tools.subagent import register as register_subagent
+from .tools.code_exec import init_sandbox, register as register_code_exec
+from .tools.web_search import register as register_web_search
 
 log = logging.getLogger(__name__)
 
@@ -238,6 +240,8 @@ def create_app(
             register_calc(default_registry)
             register_cron(default_registry)
             register_subagent(default_registry)
+            register_code_exec(default_registry)
+            register_web_search(default_registry)
         session = WebSession(
             cfg=cfg,
             ep=ep,

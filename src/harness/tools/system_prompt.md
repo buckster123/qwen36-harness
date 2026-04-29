@@ -28,6 +28,43 @@ All paths are relative to sandbox root. No absolute paths.
 ### calc.* (Calculator)
 - **calc.evaluate(expression)** → Parse and evaluate mathematical expressions using sympy. Supports algebraic simplification, symbolic derivatives, numeric evaluation, equation solving. Returns exact symbolic results where possible.
 
+### web.search (Web Search — NEW)
+Search the web using DuckDuckGo. Zero config, no API key required. Returns structured search results with URL, title, and snippet.
+
+- **web.search(query, max_results=5)** → Search for information online
+  - query: The search query text (required)
+  - max_results: Max results to return (default 5, max 10)
+  - Returns: List of {url, title, snippet} objects
+
+When you need current/factual information, look up documentation details, or verify something specific — use this. Results are concise snippets; follow URLs if the model can also access them later. Always search for factual claims about external systems, APIs, or recent events.
+
+Example:
+```
+web.search("Qwen3.6 official documentation") → [{url: "...", title: "...", snippet: "..."}, ...]
+```
+
+### code.exec (Code Execution — NEW)
+Execute arbitrary code in a sandboxed subprocess. Safe for math/data processing, file I/O inside the sandbox, and general computation.
+
+- **code.exec(code, lang="python", timeout_s=60, args=None)** → Run code safely
+  - code: The code string to execute (required)
+  - lang: Language — python (default), sh (shell), node
+  - timeout_s: Max runtime in seconds (default 60)
+  - args: Extra arguments for the interpreter
+
+Safety boundaries:
+- Working directory confined to `~/.harness-code-sandbox/` — all file writes stay inside this root
+- Processes killed after timeout_s seconds (process tree kill on timeout)
+- Dangerous binaries blocked: rm, dd, mkfs, fdisk, format, shred, wipe, umount, mount, chmod, chown, sudo, su, passwd, visudo, kill, pkill, shutdown, reboot, init
+
+When you need to process data, run computations, or produce output that requires executing code — use this. It's safe by design; write-only access is restricted to the sandbox root.
+
+Example:
+```
+code.exec("import math; print(math.sqrt(256))", lang="python") → stdout: 16.0
+code.exec("echo 'hello'", lang="sh") → stdout: hello
+```
+
 ## APPENDABLE — Additional Tool Sections
 Add new tool sections below as they are integrated. Each section should cover:
 1. Namespace prefix used in the model's function-calling interface

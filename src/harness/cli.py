@@ -36,6 +36,8 @@ from .tools.cron import register as register_cron
 # from .tools.cerebro import register as register_cerebro
 from .tools.filesystem import FsSandbox, register as register_fs
 from .tools.subagent import init_manager, get_manager, register as register_subagent
+from .tools.code_exec import init_sandbox, register as register_code_exec
+from .tools.web_search import register as register_web_search
 from .mcp import MCPManager, load_mcp_config
 
 # --- styling ------------------------------------------------------------------
@@ -618,10 +620,12 @@ async def chat_loop(args: argparse.Namespace) -> int:
 
     # Register builtin tools on the default registry. Idempotent-ish: failure
     # in cerebro just disables those tools.
-    sandbox = register_fs(default_registry, sandbox=FsSandbox(args.sandbox or None))
+    sandbox = FsSandbox(args.sandbox or None)
+    code_sandbox = register_code_exec(default_registry, root=args.code_sandbox)
     register_calc(default_registry)
     register_cron(default_registry)
     register_subagent(default_registry)
+    register_web_search(default_registry)
     # Cerebro tools via MCP instead of manual wrapper. Start with /mcp start cerebro
     # sandbox = register_cerebro(default_registry)  # disabled — see comment above
 
@@ -699,6 +703,7 @@ def main(argv: list[str] | None = None) -> int:
     chat.add_argument("--system", "-s", help="system prompt")
     chat.add_argument("--agent", action="store_true", help="enable tool-loop agent mode")
     chat.add_argument("--sandbox", help="fs sandbox root (default ~/qwen36-sandbox)")
+    chat.add_argument("--code-sandbox", help="code exec sandbox root (default ~/.harness-code-sandbox)")
 
     serve = sub.add_parser("serve", help="run the web UI")
     serve.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")

@@ -19,8 +19,11 @@ Design choices:
 Loaded tool modules (all register against ``default_registry``):
 
 - **calc** — sympy expression evaluator
+- **code_exec** — sandboxed subprocess code runner (python, sh, node)
 - **cron** — background scheduler (daemon threads + subprocess)
 - **filesystem** — sandboxed fs.* read/list/write/search
+- **subagent** — spawn helper agents in separate llama.cpp slots
+- **web_search** — DuckDuckGo HTML scraper
 """
 
 from __future__ import annotations
@@ -200,7 +203,7 @@ def _coerce_to_string(value: Any) -> str:
 default_registry = Registry()
 
 # Import tool modules — they register against default_registry at import time
-from . import calc, cron, filesystem, subagent  # noqa: E402
+from . import calc, code_exec, cron, filesystem, subagent, web_search  # noqa: E402
 
 __all__ = [
     "Registry",
@@ -209,7 +212,9 @@ __all__ = [
     "ToolSpec",
     "default_registry",
     "calc",
+    "code_exec",
     "cron",
     "filesystem",
     "subagent",
+    "web_search",
 ]
