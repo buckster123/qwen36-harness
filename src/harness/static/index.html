@@ -201,6 +201,7 @@
   <label><input type="checkbox" id="agent-toggle"> agent</label>
   <label><input type="checkbox" id="think-toggle"> show reasoning</label>
   <span class="grow"></span>
+  <button id="discover-btn" title="Probe endpoints for available models">🔍 discover</button>
   <button id="settings-btn" title="System prompt">/system</button>
   <button id="clear-btn" class="danger">/clear</button>
 </header>
@@ -289,7 +290,15 @@ function renderHeader() {
   state.endpoints.forEach(e => {
     const o = document.createElement('option');
     o.value = e.name;
-    o.textContent = `${e.name} (${e.model.split('/').pop()})`;
+    // Prefer the actually-discovered model name; fall back to hardcoded config.
+    const discModels = (state.discovered_models && state.discovered_models[e.name]) || [];
+    const modelLabel = discModels.length > 0 ? discModels[0].split('/').pop() : e.model.split('/').pop();
+    o.textContent = `${e.name} (${modelLabel})`;
+    if (discModels.length > 1) {
+      o.title = `Also available: ${discModels.slice(1).map(m => m.split('/').pop()).join(', ')}`;
+    } else if (!discModels.length) {
+      o.title = 'model not discovered — check endpoint connectivity';
+    }
     o.selected = e.current;
     epSel.appendChild(o);
   });
@@ -751,6 +760,19 @@ $('max-input').onchange  = (e) => pushSettings({max_tokens: parseInt(e.target.va
 $('temp-input').onchange = (e) => pushSettings({temperature: parseFloat(e.target.value)});
 $('agent-toggle').onchange = (e) => pushSettings({agent_mode: e.target.checked});
 $('think-toggle').onchange = (e) => pushSettings({show_thinking: e.target.checked});
+
+// --- model discovery ---
+$('discover-btn').onclick = async () => {
+  $('discover-btn').textContent = '⏳ probing...';
+  $('discover-btn').disabled = true;
+  try {
+    await api('/api/discover', {method: 'POST'});
+    await refreshState();
+    toast('models discovered');
+  } catch (e) { toast(e.message, true); }
+  $('discover-btn').textContent = '🔍 discover';
+  $('discover-btn').disabled = false;
+};
 
 refreshState().catch(e => toast('init failed: ' + e.message, true));
 </script>

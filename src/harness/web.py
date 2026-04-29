@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -76,6 +78,7 @@ class WebSession:
     system: str | None = None
     turns: list[dict[str, Any]] = field(default_factory=list)
     last_stats: dict[str, Any] = field(default_factory=dict)
+    discovered_models: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.client = HarnessClient(self.ep)
@@ -122,6 +125,44 @@ class SettingsRequest(BaseModel):
 
 class ToolToggleRequest(BaseModel):
     enabled: bool
+
+
+# ---------------------------------------------------------------------------
+# Model discovery — ping /v1/models on each configured endpoint
+# ---------------------------------------------------------------------------
+
+
+async def _discover_endpoint_models(client: httpx.AsyncClient, endpoint) -> list[dict[str, Any]]:
+    """Return a list of {id, object, owned_by} from the endpoint's /models endpoint."""
+    try:
+        url = endpoint.models_url()  # uses Endpoint.models_url() — already includes /v1
+        resp = await client.get(url, timeout=5.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("data", []) or []
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+async def discover_models(session: WebSession) -> dict[str, list[dict[str, Any]]]:
+    """Ping all configured endpoints' /v1/models and cache the results."""
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        tasks = [
+            _discover_endpoint_models(client, ep)
+            for ep in session.cfg.endpoints.values()
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    discovered: dict[str, list[dict[str, Any]]] = {}
+    for (ep_name, ep), result in zip(session.cfg.endpoints.items(), results):
+        if isinstance(result, Exception):
+            log.warning("discover '%s': %s", ep_name, result)
+            continue
+        discovered[ep_name] = result
+
+    session.discovered_models = discovered
+    return discovered
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +218,7 @@ def _state_payload(session: WebSession) -> dict[str, Any]:
         "cron": cron_scheduler.list_jobs(),
         "turn_count": len(session.turns),
         "last_stats": session.last_stats,
+        "discovered_models": {k: [m["id"] for m in v] for k, v in session.discovered_models.items()},
     }
 
 
@@ -329,6 +371,15 @@ def create_app(
         session.cancel_event.set()
         return {"ok": True}
 
+    # --- model discovery ------------------------------------------------------
+
+    @app.post("/api/discover")
+    async def api_discover() -> dict[str, Any]:
+        models = await discover_models(session)
+        # Also refresh MCP configs so the full state is up to date
+        session.mcp_configs = load_mcp_config()
+        return {"ok": True, "models": models}
+
     # --- lifecycle ----------------------------------------------------------
 
     @asynccontextmanager
@@ -345,6 +396,11 @@ def create_app(
                     )
                 except Exception as e:  # noqa: BLE001
                     log.warning("mcp '%s' auto_start failed: %s", nm, e)
+
+        # Discover available models from all configured endpoints
+        discovered = await discover_models(session)
+        log.info("discovered models: %s", {k: len(v) for k, v in discovered.items()})
+
         try:
             yield
         finally:
