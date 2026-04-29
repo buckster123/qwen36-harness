@@ -39,7 +39,7 @@ from typing import Any
 import httpx
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
@@ -57,10 +57,39 @@ from .tools.subagent import register as register_subagent
 from .tools.code_exec import init_sandbox, register as register_code_exec
 from .tools.web_search import register as register_web_search
 from .tools.vast_manager import VastManager
+from .storage import init_db, create_session, load_session, list_sessions, get_stats, import_from_jsonl, delete_session, clear_all_sessions, clear_current_session, export_session_to_jsonl, _get_conn, save_session, delete_turn
 
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _current_session_id() -> str | None:
+    """Return the current session's id if available."""
+    return getattr(web_app.state, '_current_sid', None)
+
+
+def _save_current_session(session: WebSession) -> dict[str, Any] | None:
+    """Auto-save the current conversation to persistent storage."""
+    try:
+        sid = getattr(web_app.state, '_current_sid', None)
+        if not session.turns:
+            return None
+        result = save_session(
+            sid=sid,
+            turns=session.turns,
+            system_prompt=session.system or "",
+            endpoint=getattr(session.ep, 'name', '') or '',
+        )
+        if result.get("id") and not sid:
+            web_app.state._current_sid = result["id"]  # type: ignore[name-defined]
+        return result
+    except Exception as e:  # noqa: BLE001
+        log.warning("auto-save failed: %s", e)
+    return None
+
+
+web_app: FastAPI | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +284,8 @@ def create_app(
         )
 
     app = FastAPI(title="qwen36-harness web", version="0.3.0")
+    global web_app  # module-level reference for storage hooks
+    web_app = app
     app.state.session = session
 
     if STATIC_DIR.exists():
@@ -463,11 +494,142 @@ def create_app(
         result = await asyncio.to_thread(vm.tunnel, action)
         return result
 
+    # --- Conversation History ---------------------------------------------------
+
+    @app.get("/api/history/list")
+    async def history_list(state: str | None = None) -> dict[str, Any]:
+        """List all saved sessions with metadata."""
+        sessions = await asyncio.to_thread(list_sessions, search=state)
+        return {"ok": True, "sessions": sessions}
+
+    @app.get("/api/history/stats")
+    async def history_stats() -> dict[str, Any]:
+        """Return session/message counts for UI display."""
+        stats = await asyncio.to_thread(get_stats)
+        return {"ok": True, **stats}
+
+    @app.post("/api/history/load")
+    async def history_load(req: dict[str, str] | None = None) -> dict[str, Any]:
+        """Load a saved session into the current conversation."""
+        body = req or {}
+        sid = body.get("session_id")
+        if not sid:
+            raise HTTPException(400, "missing 'session_id' field")
+
+        result = await asyncio.to_thread(load_session, sid)
+        if not result:
+            raise HTTPException(404, f"session '{sid}' not found")
+
+        # Replace current session with loaded messages
+        session.turns = result["messages"]
+        if result.get("system_prompt"):
+            session.system = result["system_prompt"]
+        web_app.state._current_sid = sid  # type: ignore[name-defined]
+
+        # Persist the loaded session immediately
+        try:
+            await asyncio.to_thread(save_session, sid, session.turns, result.get("system_prompt") or "", "")
+        except Exception:  # noqa: BLE001
+            pass
+
+        return {
+            "ok": True,
+            "session_id": sid,
+            "turn_count": len(result["messages"]),
+            "messages": result["messages"],
+        }
+
+    @app.post("/api/history/export")
+    async def history_export(req: dict[str, str] | None = None) -> StreamingResponse:
+        """Export a session as JSONL file download."""
+        body = req or {}
+        sid = body.get("session_id")
+        if not sid:
+            raise HTTPException(400, "missing 'session_id' field")
+
+        from .storage import export_session_to_jsonl
+        data = await asyncio.to_thread(export_session_to_jsonl, sid)
+        if not data:
+            raise HTTPException(404, f"session '{sid}' not found")
+
+        safe_name = sid.replace(" ", "_") + ".jsonl"
+        return StreamingResponse(
+            iter([data]),
+            media_type="application/x-jsonlines",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+        )
+
+    @app.post("/api/history/import")
+    async def history_import(req: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Import a conversation from JSONL data (sent in request body)."""
+        body = req or {}
+        sid = body.get("session_id")
+        data = body.get("data", "")
+        if not data:
+            raise HTTPException(400, "missing 'data' field")
+
+        result = await asyncio.to_thread(import_from_jsonl, data, session_id=sid)  # type: ignore[name-defined]
+
+        # Load the imported session into current conversation
+        loaded = await asyncio.to_thread(load_session, result["id"])
+        if loaded:
+            session.turns = loaded["messages"]
+            web_app.state._current_sid = result["id"]  # type: ignore[name-defined]
+
+        return {"ok": True, "imported_turns": result["imported_turns"]}
+
+    @app.delete("/api/history/delete")
+    async def history_delete(req: dict[str, str] | None = None) -> dict[str, Any]:
+        """Delete a saved session."""
+        body = req or {}
+        sid = body.get("session_id")
+        if not sid:
+            raise HTTPException(400, "missing 'session_id' field")
+
+        deleted = await asyncio.to_thread(delete_session, sid)  # type: ignore[name-defined]
+        if not deleted:
+            raise HTTPException(404, f"session '{sid}' not found")
+        return {"ok": True}
+
+    @app.delete("/api/history/clear")
+    async def history_clear(req: dict[str, str] | None = None) -> dict[str, Any]:
+        """Clear all saved sessions (permanent)."""
+        n = await asyncio.to_thread(clear_all_sessions)  # type: ignore[name-defined]
+        session.turns.clear()
+        session.last_stats = {}
+        web_app.state._current_sid = None  # type: ignore[name-defined]
+        return {"ok": True, "deleted_sessions": n}
+
+    @app.delete("/api/history/clear_current")
+    async def history_clear_current() -> dict[str, Any]:
+        """Clear current session messages only (keeps the session record)."""
+        sid = getattr(web_app.state, '_current_sid', None)  # type: ignore[name-defined]
+        await asyncio.to_thread(clear_current_session, sid)
+        session.turns.clear()
+        return {"ok": True}
+
+    @app.delete("/api/history/delete_turn")
+    async def history_delete_turn(req: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Delete an individual turn from a session. Body: {session_id, turn_index}."""
+        body = req or {}
+        sid = body.get("session_id")
+        idx = body.get("turn_index", body.get("index"))
+        if not sid or idx is None:
+            raise HTTPException(400, "missing session_id and/or turn_index")
+
+        deleted = await asyncio.to_thread(delete_turn, sid, int(idx))
+        if not deleted:
+            raise HTTPException(404, f"turn index {idx} not found in session {sid}")
+        return {"ok": True}
+
 
     # --- lifecycle ----------------------------------------------------------
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        # Initialize database
+        init_db()
+
         # Auto-start any flagged MCP servers
         for nm, mc in session.mcp_configs.items():
             if mc.auto_start:
@@ -602,7 +764,13 @@ async def _chat_stream(session: WebSession, user_text: str):
                     "data": json.dumps({"error": f"{type(e).__name__}: {e}"}),
                 }
 
-        yield {"event": "end", "data": "{}"}
+    # Auto-save after every turn completes
+    try:
+        await asyncio.to_thread(_save_current_session, session)
+    except Exception:  # noqa: BLE001
+        pass
+
+    yield {"event": "end", "data": "{}"}
 
 
 __all__ = ["create_app", "WebSession"]
