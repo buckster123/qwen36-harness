@@ -16,20 +16,24 @@ default_max_tokens  = 2048
 default_temperature = 0.7
 mode = "thinking"
 
-[endpoints.npu-llama]
-description = "Local Krackan NPU, Llama-3.2-3B 16K, ~26 t/s"
-base_url = "http://127.0.0.1:8000/v1"
-model    = "Llama-3.2-3B-Instruct_rai_1.7.1_npu_16K"
-api_key  = "sk-local"
-default_max_tokens  = 1024
-default_temperature = 0.7
-mode = "nonthinking"
+# --- NPU endpoints (Krackan only — services die with session) ---------------
+# Comment these out when not on Krackan to keep the endpoint list clean.
+# Uncomment and start ryzenai-lab/serve processes to use them locally.
 
-[endpoints.npu-gemma]
-description = "Local Krackan NPU, Gemma-3-4B vision, 4K ctx"
-base_url = "http://127.0.0.1:8002/v1"
-model    = "gemma-3-4b-it-mm"
-api_key  = "sk-local"
-default_max_tokens  = 1024
-default_temperature = 0.7
-mode = "nonthinking"
+#[endpoints.npu-llama]
+#description = "Local Krackan NPU, Llama-3.2-3B 16K, ~26 t/s"
+#base_url = "http://127.0.0.1:8000/v1"
+#model    = "Llama-3.2-3B-Instruct_rai_1.7.1_npu_16K"
+#api_key  = "sk-local"
+#default_max_tokens  = 1024
+#default_temperature = 0.7
+#mode = "nonthinking"
+
+#[endpoints.npu-gemma]
+#description = "Local Krackan NPU, Gemma-3-4B vision, 4K ctx"
+#base_url = "http://127.0.0.1:8002/v1"
+#model    = "gemma-3-4b-it-mm"
+#api_key  = "sk-local"
+#default_max_tokens  = 1024
+#default_temperature = 0.7
+#mode = "nonthinking"
