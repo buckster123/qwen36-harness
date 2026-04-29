@@ -96,13 +96,14 @@ Add a tabbed panel to the **right sidebar** replacing "Cron Jobs":
 
 ### Implementation Steps (Order Matters)
 
-**Phase 1: Storage Layer (backend-only)**
-1. Create `src/harness/storage.py` with save/load/delete/list/clear functions
-2. Add API endpoints for export/import/delete/clear
-3. Wire up auto-save on every chat turn completion
-4. Test CLI → storage roundtrip compatibility
+**Phase 1 ✅ DONE — Storage Layer (backend-only)**
+1. Create `src/harness/storage.py` with save/load/delete/list/clear functions ✅
+2. Add API endpoints for export/import/delete/clear ✅
+3. Wire up auto-save on every chat turn completion ✅
+4. SQLite schema: sessions + messages tables with FTS5 triggers ✅
+5. Test CLI → storage roundtrip compatibility ✅
 
-**Phase 2: History UI (frontend-only, no backend changes)**
+**Phase 2 — History UI (frontend-only, no backend changes)**
 1. Add "History" tab to right sidebar (next to existing "Conversation" tab)
 2. Fetch and display session list from `/api/history/list`
 3. Wire up click-to-load, delete buttons

@@ -174,7 +174,49 @@
     border-radius: 4px; font-size: 11px; color: var(--fg); display: none; z-index: 1000;
   }
   #toast.error { border-color: var(--error); color: var(--error); }
-  #toast.show { display: block; }
+ #toast.show { display: block; }
+
+  /* HISTORY PANEL */
+  #history-panel {
+    position: fixed; top: 36px; right: 12px; width: 420px; max-height: calc(100vh - 48px);
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    display: none; flex-direction: column; z-index: 9000; overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  #history-panel.open { display: flex; }
+  .hp-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg3);
+  }
+  .hp-header span { font-size: 11px; color: var(--accent); font-weight: 600; }
+  .hp-body { overflow-y: auto; flex: 1; padding: 4px 6px; }
+  .hp-search {
+    width: 100%; background: var(--bg3); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 8px; font: inherit; font-size: 11px; margin: 4px 6px;
+    box-sizing: border-box;
+  }
+  .hp-search:focus { outline: none; border-color: var(--accent); }
+  .hp-btns { display: flex; gap: 4px; padding: 4px 6px; }
+  .hp-btns button {
+    font-size: 10px; padding: 2px 8px; background: var(--bg4); color: var(--fg2);
+    border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+  }
+  .hp-btns button:hover { border-color: var(--accent2); color: var(--accent2); }
+  .hp-session-row {
+    display: flex; align-items: center; padding: 5px 6px; margin: 2px 0;
+    background: var(--bg3); border: 1px solid var(--border); border-radius: 4px;
+    cursor: pointer; font-size: 10px; gap: 4px; transition: background 0.1s;
+  }
+  .hp-session-row:hover { background: var(--bg4); border-color: var(--accent2); }
+  .hp-sid { color: var(--fg3); font-size: 9px; min-width: 14px; text-align: center; }
+  .hp-info { flex: 1; min-width: 0; }
+  .hp-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+  .hp-meta { color: var(--fg3); font-size: 9px; margin-top: 2px; }
+  .hp-actions { display: flex; gap: 2px; }
+  .hp-actions button { font-size: 9px; padding: 1px 4px; border: 1px solid var(--border); background: var(--bg4); color: var(--fg3); cursor: pointer; border-radius: 2px; }
+  .hp-actions button:hover { color: var(--accent2); border-color: var(--accent2); }
+  .hp-actions .del-btn:hover { color: var(--error); border-color: var(--error); }
+  .hp-stats { font-size: 9px; color: var(--fg3); padding: 4px 6px; border-top: 1px solid var(--border); background: var(--bg3); }
 
   /* Vast Manager Overlay */
   #vast-overlay {
@@ -258,6 +300,7 @@
   <span class="grow"></span>
   <button id="discover-btn" title="Probe endpoints for available models">🔍 discover</button>
   <button id="settings-btn" title="System prompt">/system</button>
+  <button id="history-btn" title="Conversation history">📜 history</button>
   <button id="vast-btn" class="primary">⚡ Vast Manager</button>
   <button id="clear-btn" class="danger">/clear</button>
 </header>
@@ -362,8 +405,26 @@
           <span style="color:var(--accent2); font-weight:600;">http://127.0.0.1:8800/v1</span>
         </div>
       </div>
-    </div>
+   </div>
+</div>
+
+<!-- History Panel -->
+<div id="history-panel">
+  <div class="hp-header">
+    <span>📜 Conversation History</span>
+    <button onclick="$('history-panel').classList.remove('open')" style="background:none;border:none;color:var(--fg2);cursor:pointer;font-size:14px;">✕</button>
   </div>
+  <input class="hp-search" id="hp-search" placeholder="Search sessions..." />
+  <div class="hp-btns">
+    <button onclick="hpLoadSessions()" title="Refresh">↻</button>
+    <label style="font-size:10px;color:var(--fg3);cursor:pointer;margin-left:auto;">
+      📤 Import JSONL
+      <input type="file" id="hp-file-input" accept=".jsonl,.json" style="display:none;" onchange="hpImportFile(event)" />
+    </label>
+    <button onclick="hpExportAll()" title="Export all sessions">💾 Export All</button>
+  </div>
+  <div class="hp-body" id="hp-list"></div>
+  <div class="hp-stats" id="hp-stats-bar"></div>
 </div>
 
 <div id="toast"></div>
@@ -1129,6 +1190,132 @@ setInterval(() => {
     vmRefresh();
   }
 }, 15000);
+
+// --- History Panel -----------------------------------------------------------
+$('history-btn').onclick = () => {
+  const panel = $('history-panel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) hpLoadSessions();
+};
+
+async function hpLoadSessions() {
+  try {
+    const search = $('hp-search').value.trim();
+    const url = '/api/history/list' + (search ? '?state=' + encodeURIComponent(search) : '');
+    const r = await api(url);
+    const list = $('hp-list');
+    list.innerHTML = '';
+    if (!r.sessions || !r.sessions.length) {
+      list.innerHTML = '<div style="font-size:10px;color:var(--fg3);padding:8px;">No conversations saved yet. History auto-saves after each turn.</div>';
+    } else {
+      for (const sess of r.sessions) {
+        const row = document.createElement('div');
+        row.className = 'hp-session-row';
+        // Format date from ISO string
+        const d = new Date(sess.created);
+        const ts = d.toLocaleDateString(undefined, {month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString(undefined, {hour:'2-digit',minute:'2-digit'});
+        row.innerHTML = `
+          <span class="hp-sid">${sess.turn_count}</span>
+          <div class="hp-info">
+            <div class="hp-preview">${sess.preview}</div>
+            <div class="hp-meta">${ts}${sess.endpoint ? ' · ' + sess.endpoint : ''}</div>
+          </div>
+          <div class="hp-actions" onclick="event.stopPropagation()">
+            <button title="Load into current chat" onclick="hpLoadSession('${sess.id}')">▶</button>
+            <button class="del-btn" title="Delete session" onclick="hpDeleteSession('${sess.id}', this)">✕</button>
+          </div>`;
+        row.onclick = () => hpLoadSession(sess.id);
+        list.appendChild(row);
+      }
+    }
+    // Update stats bar
+    try {
+      const st = await api('/api/history/stats');
+      $('hp-stats-bar').textContent = st.sessions + ' sessions · ' + st.messages + ' messages';
+    } catch(e) { /* silent */ }
+  } catch (e) { toast('Failed to load history: ' + e.message, true); }
+}
+
+async function hpLoadSession(sid) {
+  try {
+    const r = await api('/api/history/load', {method:'POST', body:{session_id:sid}});
+    if (!r.ok) throw new Error(r.error || 'load failed');
+    // Clear current chat and load loaded messages
+    chat.innerHTML = '';
+    for (const msg of r.messages) {
+      if (msg.role === 'user') {
+        const div = document.createElement('div');
+        div.className = 'msg user';
+        div.appendChild(Object.assign(document.createElement('pre'), {textContent: msg.content}));
+        chat.appendChild(div);
+      } else {
+        const div = document.createElement('div');
+        div.className = 'msg assistant';
+        div.appendChild(Object.assign(document.createElement('pre')), {className:'content', textContent: msg.content});
+        chat.appendChild(div);
+      }
+    }
+    $('hp-search').value = '';
+    hpLoadSessions();
+    toast('Loaded ' + r.turn_count + ' turns');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function hpDeleteSession(sid, btnEl) {
+  if (!confirm('Delete this conversation?')) return;
+  try {
+    await api('/api/history/delete', {method:'DELETE', body:{session_id:sid}});
+    hpLoadSessions();
+    toast('Deleted');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function hpExportAll() {
+  try {
+    const sessions = await api('/api/history/list');
+    for (const sess of sessions.sessions) {
+      const r = await fetch('/api/history/export', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({session_id: sess.id}),
+      });
+      if (r.ok) {
+        const blob = await r.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = sess.id + '.jsonl';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+    }
+  } catch(e) { toast(e.message, true); }
+}
+
+async function hpImportFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const r = await api('/api/history/import', {method:'POST', body:{data:text}});
+    if (r.ok) {
+      toast('Imported ' + r.imported_turns + ' turns');
+      hpLoadSessions();
+    } else throw new Error(r.error || 'import failed');
+  } catch (e) { toast(e.message, true); }
+}
+
+// Close history panel on Escape or click outside
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    $('history-panel').classList.remove('open');
+  }
+});
+document.addEventListener('click', (e) => {
+  const panel = $('history-panel');
+  if (panel.classList.contains('open') && !panel.contains(e.target) && !$('history-btn').contains(e.target)) {
+    panel.classList.remove('open');
+  }
+});
 
 </script>
 </body>
